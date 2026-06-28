@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-type Tab = 'dashboard' | 'record' | 'profiles' | 'synthesis' | 'analysis';
+type Tab = 'dashboard' | 'record' | 'profiles' | 'synthesis' | 'analysis' | 'settings';
 
 interface AppState {
   activeTab: Tab;

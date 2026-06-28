@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../lib/db';
 import { useAppStore } from '../store/useAppStore';
@@ -8,9 +8,12 @@ import { Label } from './ui/label';
 import { Slider } from './ui/slider';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
 import { toast } from 'sonner';
-import { Play, Loader2, ListMusic, Download, Star, Activity } from 'lucide-react';
+import { Play, Pause, Loader2, ListMusic, Download, Star, Activity, Sparkles, MessageSquare } from 'lucide-react';
 import { ScrollArea } from './ui/scroll-area';
 import WaveformComparison from './WaveformComparison';
+import BatchSynthesisManager from './BatchSynthesisManager';
+import AudioExportModal from './AudioExportModal';
+import MiniAudioPlayer from './MiniAudioPlayer';
 
 export default function SynthesisStudio() {
   const { selectedProfileId } = useAppStore();
@@ -18,6 +21,7 @@ export default function SynthesisStudio() {
   const activeProfile = profiles.find(p => p.id === selectedProfileId);
   const queue = useLiveQuery(() => db.generationQueue.orderBy('createdAt').reverse().toArray()) || [];
 
+  const [activeMode, setActiveMode] = useState<'single' | 'batch'>('single');
   const [text, setText] = useState('');
   const [pitch, setPitch] = useState([50]);
   const [speed, setSpeed] = useState([50]);
@@ -26,6 +30,49 @@ export default function SynthesisStudio() {
   
   const [comparisonItem, setComparisonItem] = useState<any>(null);
   const [sourceAudioBlob, setSourceAudioBlob] = useState<Blob | null>(null);
+
+  // Audio Playback and Export states
+  const [exportingItem, setExportingItem] = useState<any>(null);
+  const [currentlyPlayingId, setCurrentlyPlayingId] = useState<string | null>(null);
+  const currentAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  const handlePlayToggle = (item: any) => {
+    if (!item.resultAudioBlob) return;
+    
+    if (currentlyPlayingId === item.id) {
+      if (currentAudioRef.current) {
+        currentAudioRef.current.pause();
+      }
+      setCurrentlyPlayingId(null);
+    } else {
+      if (currentAudioRef.current) {
+        currentAudioRef.current.pause();
+      }
+      
+      const url = URL.createObjectURL(item.resultAudioBlob);
+      const audio = new Audio(url);
+      currentAudioRef.current = audio;
+      setCurrentlyPlayingId(item.id);
+      
+      audio.play().catch(err => {
+        console.error('Playback error', err);
+        setCurrentlyPlayingId(null);
+      });
+      
+      audio.onended = () => {
+        setCurrentlyPlayingId(null);
+        URL.revokeObjectURL(url);
+      };
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (currentAudioRef.current) {
+        currentAudioRef.current.pause();
+      }
+    };
+  }, []);
 
   const handleCompare = async (item: any) => {
     try {
@@ -57,6 +104,24 @@ export default function SynthesisStudio() {
     if ('Notification' in window && Notification.permission === 'default') {
       Notification.requestPermission();
     }
+
+    if ('serviceWorker' in navigator) {
+      const handleMessage = (event: MessageEvent) => {
+        if (event.data) {
+          if (event.data.type === 'SYNTHESIS_COMPLETED') {
+            setIsGenerating(false);
+            toast.success('סינתזה הושלמה בהצלחה!');
+          } else if (event.data.type === 'SYNTHESIS_FAILED') {
+            setIsGenerating(false);
+            toast.error('סינתזה נכשלה');
+          }
+        }
+      };
+      navigator.serviceWorker.addEventListener('message', handleMessage);
+      return () => {
+        navigator.serviceWorker.removeEventListener('message', handleMessage);
+      };
+    }
   }, []);
 
   const handleGenerate = async () => {
@@ -81,47 +146,48 @@ export default function SynthesisStudio() {
         createdAt: Date.now()
       });
 
-      const startTime = Date.now();
-      
-      // Simulate API call for synthesis
-      setTimeout(async () => {
-        try {
-          // Generate a silent dummy blob just to represent the result
-          const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
-          const ctx = new AudioContext();
-          const buffer = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
-          // Normally we'd encode to wav/webm, here we just create an empty blob
-          const dummyBlob = new Blob(['dummy audio content'], { type: 'audio/webm' });
+      const currentText = text;
+      setText('');
 
-          const synthesisTimeMs = Date.now() - startTime;
-
-          await db.generationQueue.update(queueId, {
-            status: 'completed',
-            resultAudioBlob: dummyBlob,
-            synthesisTimeMs
-          });
-          toast.success('סינתזה הושלמה בהצלחה!');
-          
-          if ('serviceWorker' in navigator && 'Notification' in window && Notification.permission === 'granted') {
-             navigator.serviceWorker.ready.then(registration => {
-               registration.active?.postMessage({
-                 type: 'SHOW_NOTIFICATION',
-                 title: 'סינתזה הושלמה',
-                 options: {
-                   body: `הטקסט "${text.substring(0, 20)}..." סונתז בהצלחה.`,
-                   icon: '/icon.png'
-                 }
-               });
-             });
+      // Delegate synthesis process to the Service Worker so it runs safely in the background
+      if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({
+          type: 'START_BACKGROUND_SYNTHESIS',
+          payload: {
+            queueId,
+            text: currentText,
+            profileId: selectedProfileId
           }
-        } catch (e) {
-          await db.generationQueue.update(queueId, { status: 'failed' });
-          toast.error('סינתזה נכשלה');
-        } finally {
-          setIsGenerating(false);
-          setText('');
-        }
-      }, 3000);
+        });
+      } else {
+        // Fallback if Service Worker controller is not active or available
+        const startTime = Date.now();
+        setTimeout(async () => {
+          try {
+            const dummyBlob = new Blob(['simulated voice output content'], { type: 'audio/webm' });
+            const synthesisTimeMs = Date.now() - startTime;
+
+            await db.generationQueue.update(queueId, {
+              status: 'completed',
+              resultAudioBlob: dummyBlob,
+              synthesisTimeMs
+            });
+            toast.success('סינתזה הושלמה בהצלחה!');
+
+            if ('Notification' in window && Notification.permission === 'granted') {
+              new Notification('סינתזה הושלמה', {
+                body: `הטקסט "${currentText.substring(0, 20)}..." סונתז בהצלחה.`,
+                icon: '/icon.png'
+              });
+            }
+          } catch (e) {
+            await db.generationQueue.update(queueId, { status: 'failed' });
+            toast.error('סינתזה נכשלה');
+          } finally {
+            setIsGenerating(false);
+          }
+        }, 5000);
+      }
 
     } catch (err) {
       toast.error('שגיאה בהוספה לתור');
@@ -151,64 +217,105 @@ export default function SynthesisStudio() {
         
         {/* Editor Pane */}
         <Card className="lg:col-span-2 flex flex-col min-h-0">
-          <CardHeader className="shrink-0">
-            <CardTitle>עורך האולפן</CardTitle>
-            <CardDescription>
-              {activeProfile ? `קול פעיל: ${activeProfile.name}` : 'לא נבחר פרופיל קול. עבור ללשונית הפרופילים.'}
-            </CardDescription>
+          <CardHeader className="shrink-0 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <CardTitle>עורך האולפן</CardTitle>
+              <CardDescription>
+                {activeProfile ? `קול פעיל: ${activeProfile.name}` : 'לא נבחר פרופיל קול. עבור ללשונית הפרופילים.'}
+              </CardDescription>
+            </div>
+
+            {/* Premium Tab Toggles */}
+            <div className="flex bg-muted/60 p-1 rounded-lg border border-border w-fit self-end">
+              <Button
+                id="tab-single-synthesis"
+                variant="ghost"
+                size="sm"
+                onClick={() => setActiveMode('single')}
+                className={`h-7 px-3 text-xs font-semibold rounded-md transition-all duration-150 ${
+                  activeMode === 'single'
+                    ? 'bg-background text-foreground shadow-sm hover:bg-background'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-transparent'
+                }`}
+              >
+                סינתזה בודדת
+              </Button>
+              <Button
+                id="tab-batch-synthesis"
+                variant="ghost"
+                size="sm"
+                onClick={() => setActiveMode('batch')}
+                className={`h-7 px-3 text-xs font-semibold rounded-md transition-all duration-150 ${
+                  activeMode === 'batch'
+                    ? 'bg-background text-foreground shadow-sm hover:bg-background'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-transparent'
+                }`}
+              >
+                עיבוד באצ' קבוצתי
+              </Button>
+            </div>
           </CardHeader>
-          <CardContent className="flex-1 overflow-y-auto space-y-6">
-            <div className="space-y-2 flex-1 flex flex-col">
-              <Label htmlFor="text">הזן טקסט</Label>
-              <textarea 
-                id="text"
-                className="flex-1 min-h-[200px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 resize-none"
-                placeholder="הקלד את הטקסט שברצונך לסנתז כאן..."
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                dir="rtl"
-              />
-            </div>
-            
-            <div className="space-y-6 bg-muted/20 p-4 rounded-lg border border-border">
-              <h3 className="font-medium text-sm text-foreground mb-4">פרמטרים קוליים</h3>
-              <div className="space-y-3">
-                <div className="flex justify-between">
-                  <Label>גובה צליל (Pitch)</Label>
-                  <span className="text-xs text-muted-foreground">{pitch[0]}%</span>
+
+          {activeMode === 'single' ? (
+            <>
+              <CardContent className="flex-1 overflow-y-auto space-y-6">
+                <div className="space-y-2 flex-1 flex flex-col">
+                  <Label htmlFor="text">הזן טקסט</Label>
+                  <textarea 
+                    id="text"
+                    className="flex-1 min-h-[200px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 resize-none"
+                    placeholder="הקלד את הטקסט שברצונך לסנתז כאן..."
+                    value={text}
+                    onChange={(e) => setText(e.target.value)}
+                    dir="rtl"
+                  />
                 </div>
-                <Slider value={pitch} onValueChange={setPitch} max={100} step={1} />
-              </div>
-              <div className="space-y-3">
-                <div className="flex justify-between">
-                  <Label>מהירות</Label>
-                  <span className="text-xs text-muted-foreground">{speed[0]}%</span>
+                
+                <div className="space-y-6 bg-muted/20 p-4 rounded-lg border border-border">
+                  <h3 className="font-medium text-sm text-foreground mb-4">פרמטרים קוליים</h3>
+                  <div className="space-y-3">
+                    <div className="flex justify-between">
+                      <Label>גובה צליל (Pitch)</Label>
+                      <span className="text-xs text-muted-foreground">{pitch[0]}%</span>
+                    </div>
+                    <Slider value={pitch} onValueChange={setPitch} max={100} step={1} />
+                  </div>
+                  <div className="space-y-3">
+                    <div className="flex justify-between">
+                      <Label>מהירות</Label>
+                      <span className="text-xs text-muted-foreground">{speed[0]}%</span>
+                    </div>
+                    <Slider value={speed} onValueChange={setSpeed} max={100} step={1} />
+                  </div>
+                  <div className="space-y-3">
+                    <div className="flex justify-between">
+                      <Label>יציבות</Label>
+                      <span className="text-xs text-muted-foreground">{stability[0]}%</span>
+                    </div>
+                    <Slider value={stability} onValueChange={setStability} max={100} step={1} />
+                  </div>
                 </div>
-                <Slider value={speed} onValueChange={setSpeed} max={100} step={1} />
-              </div>
-              <div className="space-y-3">
-                <div className="flex justify-between">
-                  <Label>יציבות</Label>
-                  <span className="text-xs text-muted-foreground">{stability[0]}%</span>
-                </div>
-                <Slider value={stability} onValueChange={setStability} max={100} step={1} />
-              </div>
-            </div>
-          </CardContent>
-          <CardFooter className="shrink-0 border-t border-border pt-4">
-            <Button 
-              className="w-full" 
-              size="lg" 
-              onClick={handleGenerate} 
-              disabled={isGenerating || !selectedProfileId || !text.trim()}
-            >
-              {isGenerating ? (
-                <><Loader2 className="ml-2 h-4 w-4 animate-spin" /> מסנתז...</>
-              ) : (
-                <><Play className="ml-2 h-4 w-4" /> צור דיבור</>
-              )}
-            </Button>
-          </CardFooter>
+              </CardContent>
+              <CardFooter className="shrink-0 border-t border-border pt-4">
+                <Button 
+                  className="w-full" 
+                  size="lg" 
+                  onClick={handleGenerate} 
+                  disabled={isGenerating || !selectedProfileId || !text.trim()}
+                >
+                  {isGenerating ? (
+                    <><Loader2 className="ml-2 h-4 w-4 animate-spin" /> מסנתז...</>
+                  ) : (
+                    <><Play className="ml-2 h-4 w-4" /> צור דיבור</>
+                  )}
+                </Button>
+              </CardFooter>
+            </>
+          ) : (
+            <CardContent className="flex-1 overflow-y-auto p-6">
+              <BatchSynthesisManager />
+            </CardContent>
+          )}
         </Card>
 
         {/* Queue Pane */}
@@ -246,20 +353,20 @@ export default function SynthesisStudio() {
                       </div>
                       {item.status === 'completed' && (
                          <div className="flex flex-col gap-3 mt-2">
+                           <MiniAudioPlayer 
+                             audioBlob={item.resultAudioBlob}
+                             title={item.text}
+                             onDownload={() => setExportingItem(item)}
+                             id={item.id}
+                           />
                            <div className="flex gap-2">
-                             <Button size="sm" variant="secondary" className="h-7 text-xs w-full">
-                               <Play className="w-3 h-3 ml-1" /> נגן
-                             </Button>
                              <Button 
                                size="sm" 
                                variant="outline" 
-                               className="h-7 text-xs flex-1"
+                               className="h-7 text-xs w-full"
                                onClick={() => handleCompare(item)}
                              >
                                <Activity className="w-3 h-3 ml-1" /> השוואת גלים
-                             </Button>
-                             <Button size="sm" variant="outline" className="h-7 w-7 p-0 shrink-0">
-                               <Download className="w-3 h-3" />
                              </Button>
                            </div>
                            <div className="flex items-center justify-between border-t border-border pt-2">
@@ -310,6 +417,12 @@ export default function SynthesisStudio() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <AudioExportModal 
+        isOpen={!!exportingItem} 
+        onClose={() => setExportingItem(null)} 
+        item={exportingItem} 
+      />
     </div>
   );
 }

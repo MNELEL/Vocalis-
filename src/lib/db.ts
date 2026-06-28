@@ -16,6 +16,15 @@ export interface VoiceProfile {
   sourceAudioId?: string;
   baseStyleId?: string;
   createdAt: number;
+  // Multi-parameter voice characterization:
+  gender?: 'male' | 'female' | 'neutral';
+  ageGroup?: 'young' | 'mature' | 'elder';
+  pitch?: number; // 0 to 100
+  speed?: number; // 0 to 100
+  toneVibe?: 'warm' | 'professional' | 'dramatic' | 'energetic' | 'soft';
+  accent?: 'standard' | 'oriental' | 'european' | 'american';
+  resonance?: 'chest' | 'head' | 'nasal';
+  emotion?: 'calm' | 'excited' | 'empathic' | 'neutral' | 'assertive';
 }
 
 export interface VoiceStyleTemplate {

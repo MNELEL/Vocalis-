@@ -44,11 +44,116 @@ self.addEventListener('fetch', (event) => {
   );
 });
 
+function updateSynthesisInDB(queueId, resultBlob, synthesisTimeMs) {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open('VoiceAppDB');
+    request.onsuccess = (event) => {
+      const db = event.target.result;
+      const transaction = db.transaction(['generationQueue'], 'readwrite');
+      const store = transaction.objectStore('generationQueue');
+      const getRequest = store.get(queueId);
+      
+      getRequest.onsuccess = () => {
+        const item = getRequest.result;
+        if (item) {
+          item.status = 'completed';
+          item.resultAudioBlob = resultBlob;
+          item.synthesisTimeMs = synthesisTimeMs;
+          const updateRequest = store.put(item);
+          updateRequest.onsuccess = () => resolve();
+          updateRequest.onerror = (err) => reject(err);
+        } else {
+          reject(new Error('Item not found'));
+        }
+      };
+      getRequest.onerror = (err) => reject(err);
+    };
+    request.onerror = (err) => reject(err);
+  });
+}
+
+function markSynthesisFailedInDB(queueId) {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open('VoiceAppDB');
+    request.onsuccess = (event) => {
+      const db = event.target.result;
+      const transaction = db.transaction(['generationQueue'], 'readwrite');
+      const store = transaction.objectStore('generationQueue');
+      const getRequest = store.get(queueId);
+      
+      getRequest.onsuccess = () => {
+        const item = getRequest.result;
+        if (item) {
+          item.status = 'failed';
+          const updateRequest = store.put(item);
+          updateRequest.onsuccess = () => resolve();
+          updateRequest.onerror = (err) => reject(err);
+        } else {
+          reject(new Error('Item not found'));
+        }
+      };
+      getRequest.onerror = (err) => reject(err);
+    };
+    request.onerror = (err) => reject(err);
+  });
+}
+
 self.addEventListener('message', (event) => {
-  if (event.data && event.data.type === 'SHOW_NOTIFICATION') {
+  if (!event.data) return;
+
+  if (event.data.type === 'SHOW_NOTIFICATION') {
     const { title, options } = event.data;
     event.waitUntil(
       self.registration.showNotification(title, options)
+    );
+  } else if (event.data.type === 'START_BACKGROUND_SYNTHESIS') {
+    const { queueId, text, profileId } = event.data.payload;
+    const startTime = Date.now();
+
+    // Perform long running simulated synthesis in service worker background
+    event.waitUntil(
+      new Promise((resolve) => {
+        setTimeout(async () => {
+          try {
+            const synthesisTimeMs = Date.now() - startTime;
+            // Generate simulated speech wav/webm dummy blob
+            const dummyBlob = new Blob(['simulated voice output content'], { type: 'audio/webm' });
+
+            await updateSynthesisInDB(queueId, dummyBlob, synthesisTimeMs);
+
+            // Notify active windows
+            const clients = await self.clients.matchAll();
+            clients.forEach(client => {
+              client.postMessage({
+                type: 'SYNTHESIS_COMPLETED',
+                payload: { queueId, text }
+              });
+            });
+
+            // Trigger system notification (works even when tab is in background)
+            await self.registration.showNotification('סינתזת קול הושלמה', {
+              body: `הטקסט "${text.substring(0, 25)}..." מוכן להשמעה באולפן!`,
+              icon: '/icon.png',
+              badge: '/icon.png',
+              tag: queueId,
+              data: { queueId }
+            });
+            resolve();
+          } catch (err) {
+            console.error('Background synthesis error:', err);
+            await markSynthesisFailedInDB(queueId).catch(console.error);
+
+            const clients = await self.clients.matchAll();
+            clients.forEach(client => {
+              client.postMessage({
+                type: 'SYNTHESIS_FAILED',
+                payload: { queueId }
+              });
+            });
+            resolve();
+          }
+        }, 5000); // 5 seconds processing to simulate a longer heavy synthesis job
+      })
     );
   }
 });

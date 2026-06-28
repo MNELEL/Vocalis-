@@ -1,4 +1,5 @@
 import StorageManager from './StorageManager';
+import CloudSyncManager from './CloudSyncManager';
 import { Info, ShieldCheck, Cpu, HardDrive, Sparkles } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 
@@ -90,6 +91,8 @@ export default function SettingsDashboard() {
           </CardContent>
         </Card>
       </div>
+
+      <CloudSyncManager />
 
       <StorageManager />
     </div>

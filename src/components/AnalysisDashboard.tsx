@@ -5,7 +5,7 @@ import { useAppStore } from '../store/useAppStore';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, AreaChart, Area, BarChart, Bar, Legend } from 'recharts';
-import { Activity, Zap, BarChart2, ShieldAlert, Download, Clock } from 'lucide-react';
+import { Activity, Zap, BarChart2, ShieldAlert, Download, Clock, TrendingUp } from 'lucide-react';
 import { toast } from 'sonner';
 import LocalAudioAnalyzer from './LocalAudioAnalyzer';
 
@@ -43,6 +43,47 @@ export default function AnalysisDashboard() {
         name: s.name,
         'זמן ממוצע (ms)': Math.round(s.totalMs / s.count)
       }));
+  }, [generationQueue, voiceProfiles]);
+
+  const trendData = useMemo(() => {
+    if (!generationQueue.length || !voiceProfiles.length) return [];
+
+    const sortedQueue = [...generationQueue]
+      .filter(item => item.status === 'completed' && item.synthesisTimeMs)
+      .sort((a, b) => a.createdAt - b.createdAt);
+
+    if (sortedQueue.length === 0) return [];
+
+    // Group runs by date (DD/MM)
+    const dateGroups: Record<string, Record<string, { total: number, count: number }>> = {};
+    
+    sortedQueue.forEach(item => {
+      const dateStr = new Date(item.createdAt).toLocaleDateString('he-IL', {
+        month: '2-digit',
+        day: '2-digit'
+      });
+      
+      if (!dateGroups[dateStr]) {
+        dateGroups[dateStr] = {};
+      }
+      
+      if (!dateGroups[dateStr][item.profileId]) {
+        dateGroups[dateStr][item.profileId] = { total: 0, count: 0 };
+      }
+      
+      dateGroups[dateStr][item.profileId].total += item.synthesisTimeMs!;
+      dateGroups[dateStr][item.profileId].count += 1;
+    });
+
+    return Object.entries(dateGroups).map(([date, profileStats]) => {
+      const row: any = { date };
+      voiceProfiles.forEach(p => {
+        if (profileStats[p.id]) {
+          row[p.name] = Math.round(profileStats[p.id].total / profileStats[p.id].count);
+        }
+      });
+      return row;
+    });
   }, [generationQueue, voiceProfiles]);
 
   const latestReport = reports.length > 0 ? reports[reports.length - 1] : null;
@@ -320,32 +361,76 @@ export default function AnalysisDashboard() {
       </div>
 
       {performanceData.length > 0 && (
-        <Card className="mt-8 border-primary/20">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Clock className="w-5 h-5 text-blue-500" />
-              זמני סינתזה ממוצעים לפי מודל (IndexedDB)
-            </CardTitle>
-            <CardDescription>
-              השוואת ביצועים לזמן יצירת אודיו פר מודל קולי
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="h-72" dir="ltr">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={performanceData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#333" vertical={false} />
-                <XAxis dataKey="name" stroke="#666" fontSize={12} tickLine={false} axisLine={false} />
-                <YAxis stroke="#666" fontSize={12} tickLine={false} axisLine={false} orientation="right" />
-                <RechartsTooltip 
-                  contentStyle={{ backgroundColor: '#18181b', border: '1px solid #3f3f46', borderRadius: '8px' }}
-                  cursor={{ fill: 'rgba(255, 255, 255, 0.05)' }}
-                />
-                <Legend />
-                <Bar dataKey="זמן ממוצע (ms)" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8">
+          <Card className="border-primary/20">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Clock className="w-5 h-5 text-blue-500" />
+                זמני סינתזה ממוצעים לפי מודל (IndexedDB)
+              </CardTitle>
+              <CardDescription>
+                השוואת ביצועים לזמן יצירת אודיו פר מודל קולי
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="h-72" dir="ltr">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={performanceData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#333" vertical={false} />
+                  <XAxis dataKey="name" stroke="#666" fontSize={12} tickLine={false} axisLine={false} />
+                  <YAxis stroke="#666" fontSize={12} tickLine={false} axisLine={false} orientation="right" />
+                  <RechartsTooltip 
+                    contentStyle={{ backgroundColor: '#18181b', border: '1px solid #3f3f46', borderRadius: '8px' }}
+                    cursor={{ fill: 'rgba(255, 255, 255, 0.05)' }}
+                  />
+                  <Legend />
+                  <Bar dataKey="זמן ממוצע (ms)" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+
+          {trendData.length > 0 && (
+            <Card className="border-primary/20">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <TrendingUp className="w-5 h-5 text-indigo-500" />
+                  מגמת זמני סינתזה לאורך זמן
+                </CardTitle>
+                <CardDescription>
+                  שינוי במהירות יצירת השמע (במילישניות) לפי תאריך
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="h-72" dir="ltr">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={trendData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#333" vertical={false} />
+                    <XAxis dataKey="date" stroke="#666" fontSize={12} tickLine={false} axisLine={false} />
+                    <YAxis stroke="#666" fontSize={12} tickLine={false} axisLine={false} orientation="right" />
+                    <RechartsTooltip 
+                      contentStyle={{ backgroundColor: '#18181b', border: '1px solid #3f3f46', borderRadius: '8px' }}
+                    />
+                    <Legend />
+                    {voiceProfiles.map((p, idx) => {
+                      const colors = ['#a855f7', '#3b82f6', '#10b981', '#f59e0b', '#ec4899', '#14b8a6'];
+                      const strokeColor = colors[idx % colors.length];
+                      return (
+                        <Line 
+                          key={p.id}
+                          type="monotone" 
+                          dataKey={p.name} 
+                          stroke={strokeColor} 
+                          strokeWidth={2.5}
+                          dot={{ r: 4 }}
+                          activeDot={{ r: 6 }}
+                        />
+                      );
+                    })}
+                  </LineChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+          )}
+        </div>
       )}
     </div>
   );
