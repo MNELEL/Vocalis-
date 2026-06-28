@@ -7,6 +7,7 @@ import AudioRecording from './components/AudioRecording';
 import ProfileGallery from './components/ProfileGallery';
 import SynthesisStudio from './components/SynthesisStudio';
 import AnalysisDashboard from './components/AnalysisDashboard';
+import SettingsDashboard from './components/SettingsDashboard';
 import OnboardingGuide from './components/OnboardingGuide';
 import { Toaster } from './components/ui/sonner';
 
@@ -31,6 +32,7 @@ export default function App() {
     { id: 'profiles', label: 'פרופילי קול', icon: Users },
     { id: 'synthesis', label: 'אולפן סינתזה', icon: Play },
     { id: 'analysis', label: 'ניתוח קולי', icon: Activity },
+    { id: 'settings', label: 'הגדרות', icon: Settings2 },
   ] as const;
 
   const tabNames: Record<string, string> = {
@@ -38,7 +40,8 @@ export default function App() {
     record: 'הקלטת שמע',
     profiles: 'פרופילי קול',
     synthesis: 'אולפן סינתזה',
-    analysis: 'ניתוח קולי'
+    analysis: 'ניתוח קולי',
+    settings: 'הגדרות'
   };
 
   return (
@@ -137,6 +140,7 @@ export default function App() {
             {activeTab === 'profiles' && <ProfileGallery />}
             {activeTab === 'synthesis' && <SynthesisStudio />}
             {activeTab === 'analysis' && <AnalysisDashboard />}
+            {activeTab === 'settings' && <SettingsDashboard />}
           </div>
         </div>
 

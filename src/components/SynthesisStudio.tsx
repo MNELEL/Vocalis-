@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../lib/db';
 import { useAppStore } from '../store/useAppStore';
@@ -53,6 +53,12 @@ export default function SynthesisStudio() {
     }
   };
 
+  useEffect(() => {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }, []);
+
   const handleGenerate = async () => {
     if (!selectedProfileId) {
       toast.error('אנא בחר פרופיל קול תחילה.');
@@ -95,6 +101,19 @@ export default function SynthesisStudio() {
             synthesisTimeMs
           });
           toast.success('סינתזה הושלמה בהצלחה!');
+          
+          if ('serviceWorker' in navigator && 'Notification' in window && Notification.permission === 'granted') {
+             navigator.serviceWorker.ready.then(registration => {
+               registration.active?.postMessage({
+                 type: 'SHOW_NOTIFICATION',
+                 title: 'סינתזה הושלמה',
+                 options: {
+                   body: `הטקסט "${text.substring(0, 20)}..." סונתז בהצלחה.`,
+                   icon: '/icon.png'
+                 }
+               });
+             });
+          }
         } catch (e) {
           await db.generationQueue.update(queueId, { status: 'failed' });
           toast.error('סינתזה נכשלה');

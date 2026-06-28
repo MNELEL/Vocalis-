@@ -7,6 +7,7 @@ import { Button } from './ui/button';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, AreaChart, Area, BarChart, Bar, Legend } from 'recharts';
 import { Activity, Zap, BarChart2, ShieldAlert, Download, Clock } from 'lucide-react';
 import { toast } from 'sonner';
+import LocalAudioAnalyzer from './LocalAudioAnalyzer';
 
 export default function AnalysisDashboard() {
   const { selectedProfileId } = useAppStore();
@@ -111,196 +112,212 @@ export default function AnalysisDashboard() {
     }));
   };
 
-  if (!selectedProfileId) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full p-12 text-center animate-in fade-in">
-        <ShieldAlert className="w-12 h-12 text-muted-foreground mb-4 opacity-50" />
-        <h3 className="text-xl font-bold">לא נבחר פרופיל</h3>
-        <p className="text-muted-foreground mt-2 max-w-md">
-          אנא בחר פרופיל מגלריית הפרופילים כדי לצפות או להריץ דוחות וניתוחי דיבור.
+  return (
+    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-20">
+      <div>
+        <h1 className="text-3xl font-bold tracking-tight">לוח ניתוח קולי ואקוסטי</h1>
+        <p className="text-muted-foreground mt-2">
+          מנוע ניתוח קבצי שמע מקומיים, מדדי אבחון מתקדמים וסטטיסטיקות ביצועי מודל.
         </p>
       </div>
-    );
-  }
 
-  return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-20">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">לוח ניתוח קולי</h1>
-          <p className="text-muted-foreground mt-2">
-            מדדי אבחון עמוקים וניתוח אקוסטי לפרופיל הפעיל.
-          </p>
-        </div>
-        <div className="flex gap-2">
-          {latestReport && (
-            <Button variant="outline" onClick={exportDataToJSON}>
-              <Download className="w-4 h-4 ml-2" /> ייצוא ל-JSON
-            </Button>
-          )}
-          <Button onClick={runAnalysis} disabled={isAnalyzing}>
-            {isAnalyzing ? (
-               <><Activity className="w-4 h-4 ml-2 animate-spin" /> מנתח...</>
-            ) : (
-               <><Zap className="w-4 h-4 ml-2" /> הרץ אבחון חדש</>
-            )}
-          </Button>
-        </div>
-      </div>
+      {/* Always accessible Local Audio Analyzer */}
+      <LocalAudioAnalyzer />
 
-      {!latestReport && !isAnalyzing && (
-        <Card className="border-dashed bg-muted/10">
-          <CardContent className="flex flex-col items-center justify-center p-12 text-center">
-            <BarChart2 className="w-12 h-12 text-muted-foreground mb-4 opacity-30" />
-            <h3 className="text-lg font-medium">אין נתונים זמינים</h3>
-            <p className="text-muted-foreground mt-1 max-w-sm">
-              הרץ סריקת אבחון על פרופיל זה כדי להפיק מדדי דיבור, ציוני בהירות ותרשימי ציר זמן.
+      {/* Voice Profile Diagnosis Section */}
+      <div className="border-t border-border pt-6 space-y-6">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+          <div>
+            <h2 className="text-2xl font-bold tracking-tight">אבחון פרופיל קול אקוסטי</h2>
+            <p className="text-sm text-muted-foreground mt-1">
+              מדדי אבחון עמוקים ושינויי גובה צליל, קצב ועוצמה עבור הפרופיל הפעיל.
             </p>
-          </CardContent>
-        </Card>
-      )}
-
-      {latestReport && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {/* Clarity Score Card */}
-          <Card className="md:col-span-1 border-primary/20 bg-primary/5">
-            <CardHeader>
-              <CardTitle>ציון בהירות</CardTitle>
-              <CardDescription>דיוק אקוסטי כללי</CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-col items-center justify-center py-6">
-              <div className="relative w-32 h-32 flex items-center justify-center">
-                <svg className="w-full h-full -rotate-90" viewBox="0 0 100 100">
-                  <circle cx="50" cy="50" r="45" fill="transparent" stroke="currentColor" strokeWidth="8" className="text-muted/30" />
-                  <circle 
-                    cx="50" cy="50" r="45" 
-                    fill="transparent" 
-                    stroke="currentColor" 
-                    strokeWidth="8" 
-                    strokeDasharray={`${(latestReport.clarityScore / 100) * 283} 283`}
-                    className="text-primary transition-all duration-1000 ease-out" 
-                  />
-                </svg>
-                <div className="absolute inset-0 flex flex-col items-center justify-center">
-                  <span className="text-4xl font-bold tracking-tighter">{latestReport.clarityScore}</span>
-                  <span className="text-xs text-muted-foreground uppercase tracking-widest mt-1">/100</span>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Diarization Timeline */}
-          <Card className="md:col-span-2">
-            <CardHeader>
-              <CardTitle>חלוקת דוברים בציר הזמן (Diarization)</CardTitle>
-              <CardDescription>מקטעי דוברים שזוהו לאורך זמן</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="h-32 relative w-full bg-zinc-950/50 rounded-lg border border-border p-4 flex flex-col justify-center" dir="ltr">
-                <div className="relative h-12 w-full bg-muted/30 rounded overflow-hidden">
-                  {latestReport.diarizationSegments.map((seg, i) => {
-                    const totalDuration = 12.0; // Mocked total duration
-                    const left = (seg.startTime / totalDuration) * 100;
-                    const width = ((seg.endTime - seg.startTime) / totalDuration) * 100;
-                    const isA = seg.speakerId === 'דובר א';
-                    return (
-                      <div 
-                        key={i}
-                        className={`absolute h-full flex items-center justify-center text-[10px] font-mono text-white/90 border-r border-background/20 transition-all ${isA ? 'bg-purple-600' : 'bg-blue-600'}`}
-                        style={{ left: `${left}%`, width: `${width}%` }}
-                        title={`${seg.speakerId} (${seg.startTime}s - ${seg.endTime}s)`}
-                        dir="rtl"
-                      >
-                        {width > 10 ? seg.speakerId : ''}
-                      </div>
-                    );
-                  })}
-                </div>
-                <div className="flex justify-between text-xs text-muted-foreground mt-2 font-mono" dir="ltr">
-                  <span>0.0s</span>
-                  <span>12.0s</span>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Pitch Chart */}
-          <Card className="md:col-span-3 lg:col-span-1">
-            <CardHeader>
-              <CardTitle>השתנות גובה צליל (Hz)</CardTitle>
-            </CardHeader>
-            <CardContent className="h-64" dir="ltr">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={formatChartData(latestReport.pitchVariation)}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#333" vertical={false} />
-                  <XAxis dataKey="time" stroke="#666" fontSize={12} tickLine={false} axisLine={false} />
-                  <YAxis domain={['dataMin - 20', 'dataMax + 20']} stroke="#666" fontSize={12} tickLine={false} axisLine={false} orientation="right" />
-                  <RechartsTooltip 
-                    contentStyle={{ backgroundColor: '#18181b', border: '1px solid #3f3f46', borderRadius: '8px' }}
-                    itemStyle={{ color: '#a855f7' }}
-                  />
-                  <Line type="monotone" dataKey="value" stroke="#a855f7" strokeWidth={3} dot={false} activeDot={{ r: 6 }} />
-                </LineChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
-
-          {/* Speed Chart */}
-          <Card className="md:col-span-3 lg:col-span-1">
-            <CardHeader>
-              <CardTitle>קצב דיבור (WPM)</CardTitle>
-            </CardHeader>
-            <CardContent className="h-64" dir="ltr">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={formatChartData(latestReport.speedVariation)}>
-                  <defs>
-                    <linearGradient id="colorSpeed" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3}/>
-                      <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#333" vertical={false} />
-                  <XAxis dataKey="time" stroke="#666" fontSize={12} tickLine={false} axisLine={false} />
-                  <YAxis domain={['dataMin - 10', 'dataMax + 10']} stroke="#666" fontSize={12} tickLine={false} axisLine={false} orientation="right" />
-                  <RechartsTooltip 
-                    contentStyle={{ backgroundColor: '#18181b', border: '1px solid #3f3f46', borderRadius: '8px' }}
-                    itemStyle={{ color: '#3b82f6' }}
-                  />
-                  <Area type="monotone" dataKey="value" stroke="#3b82f6" fillOpacity={1} fill="url(#colorSpeed)" strokeWidth={3} />
-                </AreaChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
-
-          {/* Volume Chart */}
-          <Card className="md:col-span-3 lg:col-span-1">
-            <CardHeader>
-              <CardTitle>מעטפת עוצמת קול (dB)</CardTitle>
-            </CardHeader>
-            <CardContent className="h-64" dir="ltr">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={formatChartData(latestReport.volumeVariation)}>
-                  <defs>
-                    <linearGradient id="colorVol" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
-                      <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#333" vertical={false} />
-                  <XAxis dataKey="time" stroke="#666" fontSize={12} tickLine={false} axisLine={false} />
-                  <YAxis domain={['dataMin - 10', 'dataMax + 10']} stroke="#666" fontSize={12} tickLine={false} axisLine={false} orientation="right" />
-                  <RechartsTooltip 
-                    contentStyle={{ backgroundColor: '#18181b', border: '1px solid #3f3f46', borderRadius: '8px' }}
-                    itemStyle={{ color: '#10b981' }}
-                  />
-                  <Area type="step" dataKey="value" stroke="#10b981" fillOpacity={1} fill="url(#colorVol)" strokeWidth={2} />
-                </AreaChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
-
+          </div>
+          {selectedProfileId && (
+            <div className="flex gap-2">
+              {latestReport && (
+                <Button variant="outline" onClick={exportDataToJSON}>
+                  <Download className="w-4 h-4 ml-2" /> ייצוא ל-JSON
+                </Button>
+              )}
+              <Button onClick={runAnalysis} disabled={isAnalyzing}>
+                {isAnalyzing ? (
+                   <><Activity className="w-4 h-4 ml-2 animate-spin" /> מנתח...</>
+                ) : (
+                   <><Zap className="w-4 h-4 ml-2" /> הרץ אבחון חדש</>
+                )}
+              </Button>
+            </div>
+          )}
         </div>
-      )}
+
+        {!selectedProfileId ? (
+          <Card className="border-dashed bg-muted/10">
+            <CardContent className="flex flex-col items-center justify-center p-12 text-center">
+              <ShieldAlert className="w-12 h-12 text-muted-foreground mb-4 opacity-50" />
+              <h3 className="text-lg font-bold">לא נבחר פרופיל קול</h3>
+              <p className="text-muted-foreground mt-2 max-w-md text-sm">
+                אנא בחר פרופיל קול מגלריית הפרופילים כדי שתוכל להפיק ולצפות בדוחות וניתוחי דיבור אקוסטיים מתקדמים.
+              </p>
+            </CardContent>
+          </Card>
+        ) : (
+          <>
+            {!latestReport && !isAnalyzing && (
+              <Card className="border-dashed bg-muted/10">
+                <CardContent className="flex flex-col items-center justify-center p-12 text-center">
+                  <BarChart2 className="w-12 h-12 text-muted-foreground mb-4 opacity-30" />
+                  <h3 className="text-lg font-medium">אין נתוני אבחון זמינים</h3>
+                  <p className="text-muted-foreground mt-1 max-w-sm">
+                    הרץ סריקת אבחון חדשה עבור הפרופיל הנוכחי כדי להפיק מדדי דיבור, ציוני בהירות ותרשימי ציר זמן.
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+
+            {latestReport && (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {/* Clarity Score Card */}
+                <Card className="md:col-span-1 border-primary/20 bg-primary/5">
+                  <CardHeader>
+                    <CardTitle>ציון בהירות</CardTitle>
+                    <CardDescription>דיוק אקוסטי כללי</CardDescription>
+                  </CardHeader>
+                  <CardContent className="flex flex-col items-center justify-center py-6">
+                    <div className="relative w-32 h-32 flex items-center justify-center">
+                      <svg className="w-full h-full -rotate-90" viewBox="0 0 100 100">
+                        <circle cx="50" cy="50" r="45" fill="transparent" stroke="currentColor" strokeWidth="8" className="text-muted/30" />
+                        <circle 
+                          cx="50" cy="50" r="45" 
+                          fill="transparent" 
+                          stroke="currentColor" 
+                          strokeWidth="8" 
+                          strokeDasharray={`${(latestReport.clarityScore / 100) * 283} 283`}
+                          className="text-primary transition-all duration-1000 ease-out" 
+                        />
+                      </svg>
+                      <div className="absolute inset-0 flex flex-col items-center justify-center">
+                        <span className="text-4xl font-bold tracking-tighter">{latestReport.clarityScore}</span>
+                        <span className="text-xs text-muted-foreground uppercase tracking-widest mt-1">/100</span>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* Diarization Timeline */}
+                <Card className="md:col-span-2">
+                  <CardHeader>
+                    <CardTitle>חלוקת דוברים בציר הזמן (Diarization)</CardTitle>
+                    <CardDescription>מקטעי דוברים שזוהו לאורך זמן</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="h-32 relative w-full bg-zinc-950/50 rounded-lg border border-border p-4 flex flex-col justify-center" dir="ltr">
+                      <div className="relative h-12 w-full bg-muted/30 rounded overflow-hidden">
+                        {latestReport.diarizationSegments.map((seg, i) => {
+                          const totalDuration = 12.0; // Mocked total duration
+                          const left = (seg.startTime / totalDuration) * 100;
+                          const width = ((seg.endTime - seg.startTime) / totalDuration) * 100;
+                          const isA = seg.speakerId === 'דובר א';
+                          return (
+                            <div 
+                              key={i}
+                              className={`absolute h-full flex items-center justify-center text-[10px] font-mono text-white/90 border-r border-background/20 transition-all ${isA ? 'bg-purple-600' : 'bg-blue-600'}`}
+                              style={{ left: `${left}%`, width: `${width}%` }}
+                              title={`${seg.speakerId} (${seg.startTime}s - ${seg.endTime}s)`}
+                              dir="rtl"
+                            >
+                              {width > 10 ? seg.speakerId : ''}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div className="flex justify-between text-xs text-muted-foreground mt-2 font-mono" dir="ltr">
+                        <span>0.0s</span>
+                        <span>12.0s</span>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* Pitch Chart */}
+                <Card className="md:col-span-3 lg:col-span-1">
+                  <CardHeader>
+                    <CardTitle>השתנות גובה צליל (Hz)</CardTitle>
+                  </CardHeader>
+                  <CardContent className="h-64" dir="ltr">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={formatChartData(latestReport.pitchVariation)}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#333" vertical={false} />
+                        <XAxis dataKey="time" stroke="#666" fontSize={12} tickLine={false} axisLine={false} />
+                        <YAxis domain={['dataMin - 20', 'dataMax + 20']} stroke="#666" fontSize={12} tickLine={false} axisLine={false} orientation="right" />
+                        <RechartsTooltip 
+                          contentStyle={{ backgroundColor: '#18181b', border: '1px solid #3f3f46', borderRadius: '8px' }}
+                          itemStyle={{ color: '#a855f7' }}
+                        />
+                        <Line type="monotone" dataKey="value" stroke="#a855f7" strokeWidth={3} dot={false} activeDot={{ r: 6 }} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </CardContent>
+                </Card>
+
+                {/* Speed Chart */}
+                <Card className="md:col-span-3 lg:col-span-1">
+                  <CardHeader>
+                    <CardTitle>קצב דיבור (WPM)</CardTitle>
+                  </CardHeader>
+                  <CardContent className="h-64" dir="ltr">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={formatChartData(latestReport.speedVariation)}>
+                        <defs>
+                          <linearGradient id="colorSpeed" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3}/>
+                            <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#333" vertical={false} />
+                        <XAxis dataKey="time" stroke="#666" fontSize={12} tickLine={false} axisLine={false} />
+                        <YAxis domain={['dataMin - 10', 'dataMax + 10']} stroke="#666" fontSize={12} tickLine={false} axisLine={false} orientation="right" />
+                        <RechartsTooltip 
+                          contentStyle={{ backgroundColor: '#18181b', border: '1px solid #3f3f46', borderRadius: '8px' }}
+                          itemStyle={{ color: '#3b82f6' }}
+                        />
+                        <Area type="monotone" dataKey="value" stroke="#3b82f6" fillOpacity={1} fill="url(#colorSpeed)" strokeWidth={3} />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </CardContent>
+                </Card>
+
+                {/* Volume Chart */}
+                <Card className="md:col-span-3 lg:col-span-1">
+                  <CardHeader>
+                    <CardTitle>מעטפת עוצמת קול (dB)</CardTitle>
+                  </CardHeader>
+                  <CardContent className="h-64" dir="ltr">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={formatChartData(latestReport.volumeVariation)}>
+                        <defs>
+                          <linearGradient id="colorVol" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
+                            <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#333" vertical={false} />
+                        <XAxis dataKey="time" stroke="#666" fontSize={12} tickLine={false} axisLine={false} />
+                        <YAxis domain={['dataMin - 10', 'dataMax + 10']} stroke="#666" fontSize={12} tickLine={false} axisLine={false} orientation="right" />
+                        <RechartsTooltip 
+                          contentStyle={{ backgroundColor: '#18181b', border: '1px solid #3f3f46', borderRadius: '8px' }}
+                          itemStyle={{ color: '#10b981' }}
+                        />
+                        <Area type="step" dataKey="value" stroke="#10b981" fillOpacity={1} fill="url(#colorVol)" strokeWidth={2} />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </CardContent>
+                </Card>
+              </div>
+            )}
+          </>
+        )}
+      </div>
 
       {performanceData.length > 0 && (
         <Card className="mt-8 border-primary/20">

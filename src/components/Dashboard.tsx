@@ -3,7 +3,6 @@ import { db } from '../lib/db';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { useAppStore } from '../store/useAppStore';
 import { Mic, Users, Play, Activity } from 'lucide-react';
-import StorageManager from './StorageManager';
 
 export default function Dashboard() {
   const { setActiveTab } = useAppStore();
@@ -86,8 +85,6 @@ export default function Dashboard() {
           );
         })}
       </div>
-
-      <StorageManager />
     </div>
   );
 }

@@ -33,7 +33,6 @@ export default function StorageManager() {
 
   const handleDeleteOldAudio = async () => {
     try {
-      // Calculate sizes and find old ones, but for simplicity we'll just delete oldest 5
       if (audioDrafts.length > 0) {
          const sorted = [...audioDrafts].sort((a, b) => a.createdAt - b.createdAt);
          const toDelete = sorted.slice(0, Math.min(5, sorted.length));
@@ -42,10 +41,27 @@ export default function StorageManager() {
          }
          toast.success(`נמחקו ${toDelete.length} הקלטות ישנות בהצלחה`);
       } else {
-         toast.info("אין הקלטות למחיקה");
+         toast.info("אין הקלטות מקור למחיקה");
       }
     } catch (err) {
       toast.error('מחיקת הקלטות נכשלה');
+    }
+  };
+
+  const handleDeleteOldSamples = async () => {
+    try {
+      if (generatedQueue.length > 0) {
+         const sorted = [...generatedQueue].sort((a, b) => a.createdAt - b.createdAt);
+         const toDelete = sorted.slice(0, Math.min(5, sorted.length));
+         for (const sample of toDelete) {
+           await db.generationQueue.delete(sample.id);
+         }
+         toast.success(`נמחקו ${toDelete.length} דגימות קול ישנות בהצלחה`);
+      } else {
+         toast.info("אין דגימות קול למחיקה");
+      }
+    } catch (err) {
+      toast.error('מחיקת דגימות נכשלה');
     }
   };
 
@@ -97,10 +113,14 @@ export default function StorageManager() {
           </div>
         </div>
       </CardContent>
-      <CardFooter className="bg-muted/50 p-4 border-t border-border">
+      <CardFooter className="bg-muted/50 p-4 border-t border-border flex flex-col sm:flex-row gap-4">
         <Button variant="outline" className="w-full sm:w-auto" onClick={handleDeleteOldAudio}>
           <Trash2 className="w-4 h-4 ml-2" />
-          מחק הקלטות ישנות (5 הכי ישנות)
+          מחק הקלטות מקור ישנות (5 הכי ישנות)
+        </Button>
+        <Button variant="outline" className="w-full sm:w-auto" onClick={handleDeleteOldSamples}>
+          <Trash2 className="w-4 h-4 ml-2" />
+          מחק דגימות סונתזו ישנות (5 הכי ישנות)
         </Button>
       </CardFooter>
     </Card>
