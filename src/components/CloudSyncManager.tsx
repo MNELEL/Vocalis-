@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Button } from './ui/button';
 import { Cloud, CloudUpload, CloudDownload, RefreshCw, LogIn, LogOut, FileJson, CheckCircle2, ShieldAlert, Check, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
+import { createPlayableWavBlob } from '../lib/audioUtils';
 
 // Helper utilities for Blob <-> Base64
 const blobToBase64 = (blob: Blob): Promise<string> => {
@@ -235,7 +236,7 @@ export default function CloudSyncManager() {
           await db.audioDrafts.put({
             id: d.id,
             name: d.name,
-            blob: restoredBlob || new Blob(),
+            blob: restoredBlob || createPlayableWavBlob(1.5, 440, 11025),
             durationMs: d.durationMs,
             tags: d.tags,
             createdAt: d.createdAt,

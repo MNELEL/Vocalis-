@@ -21,9 +21,18 @@ import {
   Activity,
   UserCheck,
   Languages,
-  Wind
+  Wind,
+  Calendar,
+  FileText,
+  Tag,
+  Music,
+  Download,
+  X,
+  FileAudio
 } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
+import { Badge } from './ui/badge';
+import { createPlayableWavBlob } from '../lib/audioUtils';
 
 // Hebrew Localization Labels
 const genderLabels = {
@@ -125,7 +134,107 @@ const generateAutoDescription = (
 export default function ProfileGallery() {
   const profiles = useLiveQuery(() => db.voiceProfiles.toArray()) || [];
   const drafts = useLiveQuery(() => db.audioDrafts.toArray()) || [];
+  const generationQueue = useLiveQuery(() => db.generationQueue.toArray()) || [];
   const { setSelectedProfileId, selectedProfileId } = useAppStore();
+
+  // Multi-select and bulk tagging states
+  const [selectedProfileIds, setSelectedProfileIds] = useState<string[]>([]);
+  const [bulkTagInput, setBulkTagInput] = useState('');
+  const [isBulkTagDialogOpen, setIsBulkTagDialogOpen] = useState(false);
+  const [newProfileTags, setNewProfileTags] = useState<string[]>([]);
+  const [editProfileTags, setEditProfileTags] = useState<string[]>([]);
+  const [newProfileTagInput, setNewProfileTagInput] = useState('');
+  const [editProfileTagInput, setEditProfileTagInput] = useState('');
+
+  const handleBulkDelete = async () => {
+    if (selectedProfileIds.length === 0) return;
+    if (!confirm(`האם אתה בטוח שברצונך למחוק ${selectedProfileIds.length} פרופילי קול שנבחרו?`)) return;
+    try {
+      await Promise.all(selectedProfileIds.map(id => db.voiceProfiles.delete(id)));
+      toast.success('פרופילי הקול שנבחרו נמחקו בהצלחה');
+      setSelectedProfileIds([]);
+    } catch (err) {
+      console.error(err);
+      toast.error('שגיאה במחיקת הפרופילים');
+    }
+  };
+
+  const handleBulkExport = () => {
+    if (selectedProfileIds.length === 0) return;
+    const selectedProfiles = profiles.filter(p => selectedProfileIds.includes(p.id));
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(selectedProfiles, null, 2));
+    const downloadAnchor = document.createElement('a');
+    downloadAnchor.setAttribute("href", dataStr);
+    downloadAnchor.setAttribute("download", `voice_profiles_export_${new Date().toISOString().slice(0,10)}.json`);
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+    toast.success('הפרופילים שנבחרו יוצאו בהצלחה כקובץ JSON!');
+  };
+
+  const handleExportSingleProfile = (profile: VoiceProfile) => {
+    const exportData = {
+      name: profile.name,
+      description: profile.description,
+      gender: profile.gender || 'neutral',
+      ageGroup: profile.ageGroup || 'mature',
+      pitch: profile.pitch !== undefined ? profile.pitch : 50,
+      speed: profile.speed !== undefined ? profile.speed : 50,
+      toneVibe: profile.toneVibe || 'professional',
+      accent: profile.accent || 'standard',
+      resonance: profile.resonance || 'chest',
+      emotion: profile.emotion || 'neutral',
+      tags: profile.tags || []
+    };
+    
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exportData, null, 2));
+    const downloadAnchor = document.createElement('a');
+    downloadAnchor.setAttribute("href", dataStr);
+    downloadAnchor.setAttribute("download", `voice_profile_${profile.name.replace(/\s+/g, '_')}_settings.json`);
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+    toast.success(`פרמטרי הסינתזה של "${profile.name}" יוצאו בהצלחה!`);
+  };
+
+  const handleBulkAddTag = async () => {
+    if (!bulkTagInput.trim()) {
+      toast.error('אנא הזן תגית תקינה');
+      return;
+    }
+    try {
+      await Promise.all(selectedProfileIds.map(async (id) => {
+        const profile = profiles.find(p => p.id === id);
+        if (profile) {
+          const currentTags = profile.tags || [];
+          if (!currentTags.includes(bulkTagInput.trim())) {
+            await db.voiceProfiles.update(id, {
+              tags: [...currentTags, bulkTagInput.trim()]
+            });
+          }
+        }
+      }));
+      toast.success('התגית נוספה בהצלחה לכל הפרופילים שנבחרו');
+      setBulkTagInput('');
+      setIsBulkTagDialogOpen(false);
+    } catch (err) {
+      console.error(err);
+      toast.error('שגיאה בהוספת תגית קבוצתית');
+    }
+  };
+  
+  // Related Audio Files & Metadata Dialog State
+  const [isAudioFilesDialogOpen, setIsAudioFilesDialogOpen] = useState(false);
+  const [selectedProfileForFiles, setSelectedProfileForFiles] = useState<VoiceProfile | null>(null);
+
+  // Edit file metadata state
+  const [editingFileId, setEditingFileId] = useState<string | null>(null);
+  const [editingFileType, setEditingFileType] = useState<'draft' | 'generated' | null>(null);
+  const [fileEditName, setFileEditName] = useState('');
+  const [fileEditDescription, setFileEditDescription] = useState('');
+  const [fileEditDate, setFileEditDate] = useState('');
+  const [fileEditTags, setFileEditTags] = useState<string[]>([]);
+  const [newFileTagInput, setNewFileTagInput] = useState('');
   
   // Create Dialog State
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -178,7 +287,8 @@ export default function ProfileGallery() {
         toneVibe,
         accent,
         resonance,
-        emotion
+        emotion,
+        tags: newProfileTags
       });
       toast.success('פרופיל הקול נוצר בהצלחה');
       setIsDialogOpen(false);
@@ -195,6 +305,8 @@ export default function ProfileGallery() {
       setAccent('standard');
       setResonance('chest');
       setEmotion('neutral');
+      setNewProfileTags([]);
+      setNewProfileTagInput('');
     } catch (error) {
       toast.error('יצירת הפרופיל נכשלה');
     }
@@ -212,6 +324,8 @@ export default function ProfileGallery() {
     setEditAccent(profile.accent || 'standard');
     setEditResonance(profile.resonance || 'chest');
     setEditEmotion(profile.emotion || 'neutral');
+    setEditProfileTags(profile.tags || []);
+    setEditProfileTagInput('');
     setIsEditDialogOpen(true);
   };
 
@@ -233,7 +347,8 @@ export default function ProfileGallery() {
         toneVibe: editToneVibe,
         accent: editAccent,
         resonance: editResonance,
-        emotion: editEmotion
+        emotion: editEmotion,
+        tags: editProfileTags
       });
       toast.success('פרופיל הקול עודכן בהצלחה');
       setIsEditDialogOpen(false);
@@ -250,9 +365,130 @@ export default function ProfileGallery() {
       if (selectedProfileId === id) {
         setSelectedProfileId(null);
       }
+      setSelectedProfileIds(prev => prev.filter(pId => pId !== id));
     } catch (error) {
       toast.error('מחיקת הפרופיל נכשלה');
     }
+  };
+
+  const formatDateForInput = (timestamp: number) => {
+    const date = new Date(timestamp);
+    const pad = (num: number) => String(num).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  };
+
+  const handleStartEditFile = (file: any, type: 'draft' | 'generated') => {
+    setEditingFileId(file.id);
+    setEditingFileType(type);
+    setFileEditName(file.name || (type === 'draft' ? 'הקלטת מקור' : 'שמע מסונתז'));
+    setFileEditDescription(file.description || (type === 'generated' ? file.text : ''));
+    setFileEditDate(formatDateForInput(file.createdAt));
+    setFileEditTags(file.tags || []);
+    setNewFileTagInput('');
+  };
+
+  const handleAddFileTag = () => {
+    const cleanTag = newFileTagInput.trim();
+    if (cleanTag && !fileEditTags.includes(cleanTag)) {
+      setFileEditTags([...fileEditTags, cleanTag]);
+      setNewFileTagInput('');
+    }
+  };
+
+  const handleRemoveFileTag = (tagToRemove: string) => {
+    setFileEditTags(fileEditTags.filter(t => t !== tagToRemove));
+  };
+
+  const handleSaveFileMetadata = async () => {
+    if (!editingFileId || !editingFileType) return;
+
+    try {
+      const timestamp = fileEditDate ? new Date(fileEditDate).getTime() : Date.now();
+      
+      if (editingFileType === 'draft') {
+        await db.audioDrafts.update(editingFileId, {
+          name: fileEditName,
+          description: fileEditDescription,
+          createdAt: timestamp,
+          tags: fileEditTags
+        });
+      } else {
+        await db.generationQueue.update(editingFileId, {
+          name: fileEditName,
+          description: fileEditDescription,
+          createdAt: timestamp,
+          tags: fileEditTags
+        });
+      }
+      
+      toast.success('מטא-דאטה עודכן בהצלחה');
+      setEditingFileId(null);
+      setEditingFileType(null);
+    } catch (err) {
+      console.error(err);
+      toast.error('עדכון מטא-דאטה נכשל');
+    }
+  };
+
+  const handleDeleteFile = async (fileId: string, type: 'draft' | 'generated') => {
+    if (!confirm('האם אתה בטוח שברצונך למחוק קובץ שמע זה? פעולה זו אינה הפיכה.')) return;
+    try {
+      if (type === 'draft') {
+        await db.audioDrafts.delete(fileId);
+        if (selectedProfileForFiles && selectedProfileForFiles.sourceAudioId === fileId) {
+          await db.voiceProfiles.update(selectedProfileForFiles.id, {
+            sourceAudioId: undefined
+          });
+          setSelectedProfileForFiles({
+            ...selectedProfileForFiles,
+            sourceAudioId: undefined
+          });
+        }
+        toast.success('הקלטת המקור נמחקה בהצלחה');
+      } else {
+        await db.generationQueue.delete(fileId);
+        toast.success('קובץ השמע המסונתז נמחק בהצלחה');
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error('מחיקת קובץ השמע נכשלה');
+    }
+  };
+
+  const playAudioFile = (blob: Blob | undefined) => {
+    if (!blob) {
+      toast.error('שגיאה: קובץ השמע אינו זמין');
+      return;
+    }
+    let activeBlob = blob;
+    if (activeBlob.size < 100) {
+      activeBlob = createPlayableWavBlob(1.5, 440, 11025);
+    }
+    const audioUrl = URL.createObjectURL(activeBlob);
+    const audio = new Audio(audioUrl);
+    audio.play().catch(err => {
+      console.error('Playback failed', err);
+      toast.error('שגיאה בניגון השמע');
+    });
+  };
+
+  const handleDownloadFile = (blob: Blob | undefined, name: string) => {
+    if (!blob) {
+      toast.error('שגיאה: קובץ השמע אינו זמין');
+      return;
+    }
+    let activeBlob = blob;
+    if (activeBlob.size < 100) {
+      activeBlob = createPlayableWavBlob(1.5, 440, 11025);
+    }
+    const url = URL.createObjectURL(activeBlob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${name}.wav`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -333,6 +569,62 @@ export default function ProfileGallery() {
                     dir="rtl"
                     className="flex min-h-[60px] w-full rounded-md border border-input bg-card px-3 py-2 text-xs shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                   />
+                </div>
+
+                {/* Tags management */}
+                <div className="space-y-1.5 pt-1.5">
+                  <Label className="text-xs font-semibold text-foreground">תגיות זיהוי וקטגוריה</Label>
+                  <div className="flex gap-2">
+                    <Input 
+                      placeholder="הוסף תגית (למשל: רב, מלמד, ירושלמי)" 
+                      value={newProfileTagInput}
+                      onChange={(e) => setNewProfileTagInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          if (newProfileTagInput.trim() && !newProfileTags.includes(newProfileTagInput.trim())) {
+                            setNewProfileTags(prev => [...prev, newProfileTagInput.trim()]);
+                            setNewProfileTagInput('');
+                          }
+                        }
+                      }}
+                      className="text-xs h-8 border-indigo-100/50"
+                    />
+                    <Button 
+                      type="button" 
+                      size="sm" 
+                      variant="outline" 
+                      onClick={() => {
+                        if (newProfileTagInput.trim() && !newProfileTags.includes(newProfileTagInput.trim())) {
+                          setNewProfileTags(prev => [...prev, newProfileTagInput.trim()]);
+                          setNewProfileTagInput('');
+                        }
+                      }}
+                      className="h-8 text-xs px-3 border-indigo-100/30 hover:bg-indigo-50/50"
+                    >
+                      הוסף
+                    </Button>
+                  </div>
+                  {newProfileTags.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      {newProfileTags.map((tag, idx) => (
+                        <Badge 
+                          key={idx} 
+                          variant="secondary" 
+                          className="text-[10px] px-2 py-0.5 font-bold rounded-lg bg-[#EEF2FF] text-[#4F46E5] border border-[#E0E7FF] flex items-center gap-1"
+                        >
+                          {tag}
+                          <button 
+                            type="button" 
+                            onClick={() => setNewProfileTags(prev => prev.filter((_, tIdx) => tIdx !== idx))}
+                            className="text-red-500 hover:text-red-700 font-extrabold text-xs ml-0.5"
+                          >
+                            ×
+                          </button>
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -500,6 +792,68 @@ export default function ProfileGallery() {
         </Dialog>
       </div>
 
+      {/* Bulk actions bar */}
+      {selectedProfileIds.length > 0 && (
+        <div className="bg-indigo-50/80 border border-indigo-100/50 backdrop-blur-md rounded-2xl p-4 mb-6 flex flex-wrap justify-between items-center gap-4 animate-in fade-in slide-in-from-top-4 duration-300" dir="rtl">
+          <div className="flex items-center gap-2.5">
+            <div className="bg-indigo-600 text-white rounded-lg px-2.5 py-1 text-xs font-black">
+              {selectedProfileIds.length}
+            </div>
+            <span className="text-xs font-bold text-indigo-950">פרופילים נבחרו לפעולה קבוצתית</span>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            {/* Bulk Tag Dialog */}
+            <Dialog open={isBulkTagDialogOpen} onOpenChange={setIsBulkTagDialogOpen}>
+              <DialogTrigger asChild>
+                <Button size="sm" variant="outline" className="border-indigo-200 hover:bg-indigo-50 text-indigo-700 font-bold text-xs h-9">
+                  <Tag className="w-4 h-4 ml-1.5" />
+                  הוסף תגית קבוצתית
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-[400px]" dir="rtl">
+                <DialogHeader>
+                  <DialogTitle className="font-bold text-base flex items-center gap-1.5">
+                    <Tag className="w-5 h-5 text-indigo-600" />
+                    שיוך תגית קבוצתית
+                  </DialogTitle>
+                  <DialogDescription className="text-xs">
+                    הזן תגית כדי להוסיף אותה בו זמנית לכל {selectedProfileIds.length} הפרופילים שנבחרו.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="py-4 space-y-3 text-right">
+                  <Label className="text-xs font-bold">שם התגית</Label>
+                  <Input 
+                    value={bulkTagInput}
+                    onChange={(e) => setBulkTagInput(e.target.value)}
+                    placeholder="למשל: שיעור בעיון, רבנים, חדר"
+                    className="text-xs h-10 border-indigo-100 text-right"
+                  />
+                </div>
+                <DialogFooter className="gap-2">
+                  <Button variant="outline" size="sm" onClick={() => setIsBulkTagDialogOpen(false)}>ביטול</Button>
+                  <Button className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold" onClick={handleBulkAddTag}>שייך תגית</Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            <Button size="sm" variant="outline" onClick={handleBulkExport} className="border-indigo-200 hover:bg-indigo-50 text-indigo-700 font-bold text-xs h-9">
+              <Download className="w-4 h-4 ml-1.5" />
+              ייצא פרופילים ({selectedProfileIds.length})
+            </Button>
+
+            <Button size="sm" variant="destructive" onClick={handleBulkDelete} className="bg-rose-500 hover:bg-rose-600 text-white font-bold text-xs h-9 shadow-sm">
+              <Trash2 className="w-4 h-4 ml-1.5" />
+              מחק קבוצתית ({selectedProfileIds.length})
+            </Button>
+
+            <Button size="sm" variant="ghost" onClick={() => setSelectedProfileIds([])} className="text-muted-foreground hover:text-foreground text-xs h-9">
+              בטל בחירה
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Main Grid display list */}
       {profiles.length === 0 ? (
         <div className="flex flex-col items-center justify-center p-12 border border-dashed rounded-lg bg-card text-center">
@@ -516,6 +870,12 @@ export default function ProfileGallery() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {profiles.map(profile => {
             const isSelected = selectedProfileId === profile.id;
+            const isChecked = selectedProfileIds.includes(profile.id);
+            
+            // Associated files count
+            const associatedDraft = drafts.find(d => d.id === profile.sourceAudioId);
+            const associatedQueueItems = generationQueue.filter(q => q.profileId === profile.id && q.status === 'completed');
+            const relatedFilesCount = (associatedDraft ? 1 : 0) + associatedQueueItems.length;
             
             // Build defaults if missing in older profiles to prevent render crashes
             const pGender = profile.gender || 'neutral';
@@ -540,15 +900,39 @@ export default function ProfileGallery() {
                 <CardHeader className="bg-muted/20 pb-3">
                   <div className="flex justify-between items-start">
                     <CardTitle className="text-base flex items-center gap-2 font-bold">
-                      <div className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${
-                        isSelected ? 'bg-indigo-500/20 text-indigo-400' : 'bg-muted-foreground/10 text-muted-foreground'
-                      }`}>
-                        {isSelected ? <UserCheck className="w-4 h-4" /> : <User className="w-4 h-4" />}
+                      <div className="flex items-center gap-2">
+                        <input 
+                          type="checkbox" 
+                          checked={isChecked}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedProfileIds(prev => [...prev, profile.id]);
+                            } else {
+                              setSelectedProfileIds(prev => prev.filter(id => id !== profile.id));
+                            }
+                          }}
+                          className="w-4 h-4 rounded border-indigo-200 text-indigo-600 focus:ring-indigo-500 cursor-pointer accent-indigo-600"
+                          title="בחר לפעולה קבוצתית"
+                        />
+                        <div className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${
+                          isSelected ? 'bg-indigo-500/20 text-indigo-400' : 'bg-muted-foreground/10 text-muted-foreground'
+                        }`}>
+                          {isSelected ? <UserCheck className="w-4 h-4" /> : <User className="w-4 h-4" />}
+                        </div>
                       </div>
                       <span className="truncate max-w-[150px]">{profile.name}</span>
                     </CardTitle>
                     
                     <div className="flex gap-1">
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className="h-7 w-7 text-muted-foreground hover:text-indigo-400" 
+                        onClick={() => handleExportSingleProfile(profile)}
+                        title="ייצא פרמטרי סינתזה (הגדרות)"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                      </Button>
                       <Button 
                         variant="ghost" 
                         size="icon" 
@@ -573,6 +957,21 @@ export default function ProfileGallery() {
                   <CardDescription className="line-clamp-2 pt-1 text-xs">
                     {profile.description || 'לא סופק תיאור עבור מודל זה.'}
                   </CardDescription>
+
+                  {/* Render Tags */}
+                  {profile.tags && profile.tags.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-2">
+                      {profile.tags.map((tag: string, idx: number) => (
+                        <Badge 
+                          key={idx} 
+                          variant="secondary" 
+                          className="text-[9px] px-1.5 py-0.5 font-bold rounded-md bg-[#EEF2FF] text-[#4F46E5] border border-[#E0E7FF]"
+                        >
+                          {tag}
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
                 </CardHeader>
 
                 <CardContent className="py-3 space-y-4 flex-1">
@@ -641,10 +1040,10 @@ export default function ProfileGallery() {
 
                 </CardContent>
 
-                <CardFooter className="pt-2 pb-4 px-4">
+                <CardFooter className="pt-2 pb-4 px-4 flex gap-2">
                   <Button 
                     variant={isSelected ? "secondary" : "default"} 
-                    className={`w-full text-xs h-9 font-semibold ${
+                    className={`flex-1 text-xs h-9 font-semibold ${
                       isSelected 
                         ? 'bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20' 
                         : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-sm'
@@ -654,7 +1053,19 @@ export default function ProfileGallery() {
                       toast.info(`פרופיל פעיל: ${profile.name}`);
                     }}
                   >
-                    {isSelected ? 'פרופיל פעיל במערכת' : 'בחר כפרופיל פעיל'}
+                    {isSelected ? 'פעיל' : 'בחר כפעיל'}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="h-9 px-3 hover:bg-indigo-500/10 text-xs border-indigo-500/20 text-indigo-400 flex items-center gap-1.5"
+                    onClick={() => {
+                      setSelectedProfileForFiles(profile);
+                      setIsAudioFilesDialogOpen(true);
+                    }}
+                    title="ניהול קובצי שמע ומטא-דאטה"
+                  >
+                    <FileAudio className="w-4 h-4" />
+                    קובצי שמע ({relatedFilesCount})
                   </Button>
                 </CardFooter>
               </Card>
@@ -724,6 +1135,62 @@ export default function ProfileGallery() {
                   dir="rtl"
                   className="flex min-h-[60px] w-full rounded-md border border-input bg-card px-3 py-2 text-xs shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                 />
+              </div>
+
+              {/* Edit Tags management */}
+              <div className="space-y-1.5 pt-1.5">
+                <Label className="text-xs font-semibold text-foreground">תגיות זיהוי וקטגוריה</Label>
+                <div className="flex gap-2">
+                  <Input 
+                    placeholder="הוסף תגית (למשל: רב, מלמד, ירושלמי)" 
+                    value={editProfileTagInput}
+                    onChange={(e) => setEditProfileTagInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if (editProfileTagInput.trim() && !editProfileTags.includes(editProfileTagInput.trim())) {
+                          setEditProfileTags(prev => [...prev, editProfileTagInput.trim()]);
+                          setEditProfileTagInput('');
+                        }
+                      }
+                    }}
+                    className="text-xs h-8 border-indigo-100/50"
+                  />
+                  <Button 
+                    type="button" 
+                    size="sm" 
+                    variant="outline" 
+                    onClick={() => {
+                      if (editProfileTagInput.trim() && !editProfileTags.includes(editProfileTagInput.trim())) {
+                        setEditProfileTags(prev => [...prev, editProfileTagInput.trim()]);
+                        setEditProfileTagInput('');
+                      }
+                    }}
+                    className="h-8 text-xs px-3 border-indigo-100/30 hover:bg-indigo-50/50"
+                  >
+                    הוסף
+                  </Button>
+                </div>
+                {editProfileTags.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    {editProfileTags.map((tag, idx) => (
+                      <Badge 
+                        key={idx} 
+                        variant="secondary" 
+                        className="text-[10px] px-2 py-0.5 font-bold rounded-lg bg-[#EEF2FF] text-[#4F46E5] border border-[#E0E7FF] flex items-center gap-1"
+                      >
+                        {tag}
+                        <button 
+                          type="button" 
+                          onClick={() => setEditProfileTags(prev => prev.filter((_, tIdx) => tIdx !== idx))}
+                          className="text-red-500 hover:text-red-700 font-extrabold text-xs ml-0.5"
+                        >
+                          ×
+                        </button>
+                      </Badge>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -858,6 +1325,310 @@ export default function ProfileGallery() {
           <DialogFooter className="gap-2">
             <Button variant="outline" size="sm" onClick={() => setIsEditDialogOpen(false)}>ביטול</Button>
             <Button size="sm" className="bg-indigo-600 hover:bg-indigo-500 text-white" onClick={saveEditedProfile}>שמור שינויים</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Related Audio Files & Metadata Manager Dialog */}
+      <Dialog open={isAudioFilesDialogOpen} onOpenChange={(open) => {
+        if (!open) {
+          setIsAudioFilesDialogOpen(false);
+          setSelectedProfileForFiles(null);
+          setEditingFileId(null);
+          setEditingFileType(null);
+        }
+      }}>
+        <DialogContent className="max-w-[650px] w-full" dir="rtl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-lg font-bold">
+              <FileAudio className="w-5 h-5 text-indigo-500" />
+              ניהול קובצי שמע ומטא-דאטה: {selectedProfileForFiles?.name}
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              ערוך ותייג את קובץ המקור (הקלטת בסיס) או את קובצי השמע המסונתזים המשויכים לפרופיל זה.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2 text-sm max-h-[450px] overflow-y-auto px-1">
+            {selectedProfileForFiles && (
+              <>
+                {/* 1. Base Reference Audio */}
+                <div className="space-y-2">
+                  <h4 className="text-xs font-bold text-indigo-400 flex items-center gap-1.5 border-b border-border pb-1">
+                    <Music className="w-4 h-4" />
+                    קובץ מקור (הקלטת בסיס לרפרנס)
+                  </h4>
+                  
+                  {(() => {
+                    const draft = drafts.find(d => d.id === selectedProfileForFiles.sourceAudioId);
+                    if (!draft) {
+                      return <p className="text-xs text-muted-foreground italic">לא נמצא קובץ מקור משויך לפרופיל זה.</p>;
+                    }
+
+                    const isEditing = editingFileId === draft.id && editingFileType === 'draft';
+
+                    return (
+                      <Card className="p-3 border-indigo-500/10 bg-indigo-500/5">
+                        {isEditing ? (
+                          <div className="space-y-3">
+                            <div className="space-y-1">
+                              <Label className="text-[11px] font-semibold">שם הקובץ (קול)</Label>
+                              <Input 
+                                value={fileEditName} 
+                                onChange={(e) => setFileEditName(e.target.value)} 
+                                className="h-8 text-xs" 
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-[11px] font-semibold">תיאור הקובץ</Label>
+                              <textarea 
+                                value={fileEditDescription} 
+                                onChange={(e) => setFileEditDescription(e.target.value)} 
+                                className="flex min-h-[50px] w-full rounded-md border border-input bg-card px-3 py-1 text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" 
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-[11px] font-semibold">תאריך יצירה</Label>
+                              <Input 
+                                type="datetime-local" 
+                                value={fileEditDate} 
+                                onChange={(e) => setFileEditDate(e.target.value)} 
+                                className="h-8 text-xs" 
+                              />
+                            </div>
+                            
+                            {/* Tags list & add tag inside editor */}
+                            <div className="space-y-1.5">
+                              <Label className="text-[11px] font-semibold">תגיות מטא-דאטה</Label>
+                              <div className="flex flex-wrap gap-1.5 mb-2">
+                                {fileEditTags.map(tag => (
+                                  <Badge key={tag} variant="secondary" className="text-[10px] py-0.5 px-1.5 flex items-center gap-1">
+                                    <Tag className="w-2.5 h-2.5" />
+                                    {tag}
+                                    <button onClick={() => handleRemoveFileTag(tag)} className="hover:text-rose-500 focus:outline-none">
+                                      <X className="w-2.5 h-2.5" />
+                                    </button>
+                                  </Badge>
+                                ))}
+                              </div>
+                              <div className="flex gap-1">
+                                <Input 
+                                  placeholder="הוסף תגית..." 
+                                  value={newFileTagInput} 
+                                  onChange={(e) => setNewFileTagInput(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      e.preventDefault();
+                                      handleAddFileTag();
+                                    }
+                                  }}
+                                  className="h-7 text-xs flex-1" 
+                                />
+                                <Button size="sm" type="button" onClick={handleAddFileTag} className="h-7 px-2 bg-indigo-600 text-white">
+                                  <Plus className="w-3.5 h-3.5" />
+                                </Button>
+                              </div>
+                            </div>
+
+                            <div className="flex gap-2 pt-1 justify-end">
+                              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => { setEditingFileId(null); setEditingFileType(null); }}>ביטול</Button>
+                              <Button size="sm" className="h-7 text-xs bg-green-600 hover:bg-green-500 text-white" onClick={handleSaveFileMetadata}>שמור</Button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex justify-between items-start gap-4">
+                            <div className="space-y-1.5 flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-xs truncate text-foreground">{draft.name}</span>
+                                <Badge variant="outline" className="text-[9px] py-0 border-indigo-500/30 text-indigo-400 bg-indigo-500/5">רפרנס מקורי</Badge>
+                              </div>
+                              <p className="text-[11px] text-muted-foreground line-clamp-2">
+                                {draft.description || 'לא סופק תיאור עבור קובץ שמע זה.'}
+                              </p>
+                              <div className="flex flex-wrap gap-1.5">
+                                <span className="text-[10px] text-muted-foreground flex items-center gap-1 ml-2">
+                                  <Calendar className="w-3 h-3 text-muted-foreground" />
+                                  {new Date(draft.createdAt).toLocaleString()}
+                                </span>
+                                {draft.tags?.map(tag => (
+                                  <Badge key={tag} variant="secondary" className="text-[9px] py-0 px-1 flex items-center gap-0.5">
+                                    <Tag className="w-2.5 h-2.5" />
+                                    {tag}
+                                  </Badge>
+                                ))}
+                              </div>
+                            </div>
+
+                            <div className="flex gap-1 self-center shrink-0">
+                              <Button size="icon" variant="ghost" className="h-7 w-7 hover:text-red-500" onClick={() => handleDeleteFile(draft.id, 'draft')} title="מחק">
+                                <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+                              </Button>
+                              <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => playAudioFile(draft.blob)} title="נגן">
+                                <Play className="w-3.5 h-3.5 text-foreground" />
+                              </Button>
+                              <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => handleDownloadFile(draft.blob, draft.name)} title="הורד">
+                                <Download className="w-3.5 h-3.5 text-foreground" />
+                              </Button>
+                              <Button size="icon" variant="ghost" className="h-7 w-7 text-indigo-400" onClick={() => handleStartEditFile(draft, 'draft')} title="ערוך מטא-דאטה">
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                      </Card>
+                    );
+                  })()}
+                </div>
+
+                {/* 2. Generated Audio Files */}
+                <div className="space-y-2 pt-2">
+                  <h4 className="text-xs font-bold text-indigo-400 flex items-center gap-1.5 border-b border-border pb-1">
+                    <Sparkles className="w-4 h-4" />
+                    קובצי שמע מסונתזים (תוצרי מודל הקול)
+                  </h4>
+
+                  {(() => {
+                    const generatedItems = generationQueue.filter(q => q.profileId === selectedProfileForFiles.id && q.status === 'completed');
+                    if (generatedItems.length === 0) {
+                      return <p className="text-xs text-muted-foreground italic py-2">לא נמצאו קובצי שמע מסונתזים עבור מודל זה.</p>;
+                    }
+
+                    return (
+                      <div className="space-y-2.5">
+                        {generatedItems.map((item, index) => {
+                          const isEditing = editingFileId === item.id && editingFileType === 'generated';
+                          const displayName = item.name || `תוצר סינתזה ${generatedItems.length - index}`;
+
+                          return (
+                            <Card key={item.id} className="p-3 border-border">
+                              {isEditing ? (
+                                <div className="space-y-3">
+                                  <div className="space-y-1">
+                                    <Label className="text-[11px] font-semibold">שם הקובץ (קול מסונתז)</Label>
+                                    <Input 
+                                      value={fileEditName} 
+                                      onChange={(e) => setFileEditName(e.target.value)} 
+                                      className="h-8 text-xs" 
+                                    />
+                                  </div>
+                                  <div className="space-y-1">
+                                    <Label className="text-[11px] font-semibold">תיאור הקובץ (או טקסט מקור)</Label>
+                                    <textarea 
+                                      value={fileEditDescription} 
+                                      onChange={(e) => setFileEditDescription(e.target.value)} 
+                                      className="flex min-h-[50px] w-full rounded-md border border-input bg-card px-3 py-1 text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" 
+                                    />
+                                  </div>
+                                  <div className="space-y-1">
+                                    <Label className="text-[11px] font-semibold">תאריך יצירה</Label>
+                                    <Input 
+                                      type="datetime-local" 
+                                      value={fileEditDate} 
+                                      onChange={(e) => setFileEditDate(e.target.value)} 
+                                      className="h-8 text-xs" 
+                                    />
+                                  </div>
+                                  
+                                  {/* Tags list & add tag inside editor */}
+                                  <div className="space-y-1.5">
+                                    <Label className="text-[11px] font-semibold">תגיות מטא-דאטה</Label>
+                                    <div className="flex flex-wrap gap-1.5 mb-2">
+                                      {fileEditTags.map(tag => (
+                                        <Badge key={tag} variant="secondary" className="text-[10px] py-0.5 px-1.5 flex items-center gap-1">
+                                          <Tag className="w-2.5 h-2.5" />
+                                          {tag}
+                                          <button onClick={() => handleRemoveFileTag(tag)} className="hover:text-rose-500 focus:outline-none">
+                                            <X className="w-2.5 h-2.5" />
+                                          </button>
+                                        </Badge>
+                                      ))}
+                                    </div>
+                                    <div className="flex gap-1">
+                                      <Input 
+                                        placeholder="הוסף תגית..." 
+                                        value={newFileTagInput} 
+                                        onChange={(e) => setNewFileTagInput(e.target.value)}
+                                        onKeyDown={(e) => {
+                                          if (e.key === 'Enter') {
+                                            e.preventDefault();
+                                            handleAddFileTag();
+                                          }
+                                        }}
+                                        className="h-7 text-xs flex-1" 
+                                      />
+                                      <Button size="sm" type="button" onClick={handleAddFileTag} className="h-7 px-2 bg-indigo-600 text-white">
+                                        <Plus className="w-3.5 h-3.5" />
+                                      </Button>
+                                    </div>
+                                  </div>
+
+                                  <div className="flex gap-2 pt-1 justify-end">
+                                    <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => { setEditingFileId(null); setEditingFileType(null); }}>ביטול</Button>
+                                    <Button size="sm" className="h-7 text-xs bg-green-600 hover:bg-green-500 text-white" onClick={handleSaveFileMetadata}>שמור</Button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="flex justify-between items-start gap-4">
+                                  <div className="space-y-1.5 flex-1 min-w-0">
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-bold text-xs truncate text-foreground">{displayName}</span>
+                                      {item.rating && (
+                                        <Badge variant="outline" className="text-[9px] py-0 border-amber-500/30 text-amber-400 bg-amber-500/5">
+                                          דירוג: {item.rating}★
+                                        </Badge>
+                                      )}
+                                    </div>
+                                    <p className="text-[11px] text-muted-foreground line-clamp-2">
+                                      {item.description || item.text}
+                                    </p>
+                                    <div className="flex flex-wrap gap-1.5">
+                                      <span className="text-[10px] text-muted-foreground flex items-center gap-1 ml-2">
+                                        <Calendar className="w-3 h-3 text-muted-foreground" />
+                                        {new Date(item.createdAt).toLocaleString()}
+                                      </span>
+                                      {item.tags?.map(tag => (
+                                        <Badge key={tag} variant="secondary" className="text-[9px] py-0 px-1 flex items-center gap-0.5">
+                                          <Tag className="w-2.5 h-2.5" />
+                                          {tag}
+                                        </Badge>
+                                      ))}
+                                    </div>
+                                  </div>
+
+                                  <div className="flex gap-1 self-center shrink-0">
+                                    <Button size="icon" variant="ghost" className="h-7 w-7 hover:text-red-500" onClick={() => handleDeleteFile(item.id, 'generated')} title="מחק">
+                                      <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+                                    </Button>
+                                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => playAudioFile(item.resultAudioBlob)} title="נגן">
+                                      <Play className="w-3.5 h-3.5 text-foreground" />
+                                    </Button>
+                                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => handleDownloadFile(item.resultAudioBlob, displayName)} title="הורד">
+                                      <Download className="w-3.5 h-3.5 text-foreground" />
+                                    </Button>
+                                    <Button size="icon" variant="ghost" className="h-7 w-7 text-indigo-400" onClick={() => handleStartEditFile(item, 'generated')} title="ערוך מטא-דאטה">
+                                      <Edit2 className="w-3.5 h-3.5" />
+                                    </Button>
+                                  </div>
+                                </div>
+                              )}
+                            </Card>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                </div>
+              </>
+            )}
+          </div>
+
+          <DialogFooter className="pt-2">
+            <Button variant="outline" size="sm" onClick={() => {
+              setIsAudioFilesDialogOpen(false);
+              setSelectedProfileForFiles(null);
+              setEditingFileId(null);
+              setEditingFileType(null);
+            }}>סגור</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

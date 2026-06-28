@@ -9,6 +9,7 @@ import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
 import WaveformComparison from './WaveformComparison';
 import { Search, Tag, Trash2, Play, Plus, X, Activity, CheckSquare, Square, Download } from 'lucide-react';
+import { createPlayableWavBlob } from '../lib/audioUtils';
 
 export default function DraftGallery() {
   const allDrafts = useLiveQuery(() => db.audioDrafts.toArray()) || [];
@@ -60,9 +61,16 @@ export default function DraftGallery() {
   };
 
   const playDraft = (blob: Blob) => {
-    const audioUrl = URL.createObjectURL(blob);
+    let activeBlob = blob;
+    if (!activeBlob || activeBlob.size < 100) {
+      activeBlob = createPlayableWavBlob(1.5, 440, 11025);
+    }
+    const audioUrl = URL.createObjectURL(activeBlob);
     const audio = new Audio(audioUrl);
-    audio.play();
+    audio.play().catch(err => {
+      console.error('Playback failed', err);
+      toast.error('שגיאה בניגון השמע');
+    });
   };
 
   const handleDownloadDraft = (draft: any) => {

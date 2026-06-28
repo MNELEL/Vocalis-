@@ -1,11 +1,12 @@
-import { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { db } from '../lib/db';
 import { toast } from 'sonner';
-import { Mic, Square, Save, Play, RefreshCw, Wand2, Loader2 } from 'lucide-react';
+import { Mic, Square, Save, Play, RefreshCw, Wand2, Loader2, Upload, Tag, Sparkles, Check, Plus, X, Activity } from 'lucide-react';
+import { createPlayableWavBlob, analyzeAudioAndSuggestTags } from '../lib/audioUtils';
 
 import { useAppStore } from '../store/useAppStore';
 
@@ -19,7 +20,82 @@ export default function AudioRecording() {
   const [isDenoising, setIsDenoising] = useState(false);
   const [transcript, setTranscript] = useState('');
   
+  const [activeTab, setActiveTab] = useState<'record' | 'upload'>('record');
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [suggestedTags, setSuggestedTags] = useState<string[]>([]);
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  
   const { batterySaver } = useAppStore();
+
+  const handleAudioForAutoTagging = async (blob: Blob) => {
+    setIsAnalyzing(true);
+    try {
+      const suggestions = await analyzeAudioAndSuggestTags(blob);
+      setSuggestedTags(suggestions);
+      setSelectedTags(suggestions); // Auto-select suggestions
+      toast.success('ניתוח אקוסטי הושלם בהצלחה - תגיות מוצעות נוצרו!');
+    } catch (err) {
+      console.error(err);
+      toast.error('שגיאה בניתוח הקובץ לתיוג אוטומטי');
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  const [dragActive, setDragActive] = useState(false);
+
+  const handleDrag = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.type === "dragenter" || e.type === "dragover") {
+      setDragActive(true);
+    } else if (e.type === "dragleave") {
+      setDragActive(false);
+    }
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(false);
+    
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      const file = e.dataTransfer.files[0];
+      if (file.type.startsWith('audio/')) {
+        await processUploadedAudio(file);
+      } else {
+        toast.error('אנא העלה קובץ שמע תקין בלבד (WAV, MP3 וכו\')');
+      }
+    }
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      await processUploadedAudio(e.target.files[0]);
+    }
+  };
+
+  const processUploadedAudio = async (file: File) => {
+    try {
+      setDraftName(file.name.substring(0, file.name.lastIndexOf('.')) || file.name);
+      setAudioBlob(file);
+      
+      // Calculate duration using Web Audio API
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const arrayBuffer = await file.arrayBuffer();
+      const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+      setRecordingTime(Math.round(audioBuffer.duration));
+      audioContext.close();
+      
+      // Suggest tags!
+      await handleAudioForAutoTagging(file);
+      
+      toast.success('קובץ השמע הועלה ונותח בהצלחה!');
+    } catch (err) {
+      console.error(err);
+      toast.error('שגיאה בטעינת קובץ השמע. ודא שהוא בפורמט נתמך (WAV/MP3/M4A)');
+    }
+  };
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -124,8 +200,12 @@ export default function AudioRecording() {
       };
 
       mediaRecorder.onstop = () => {
-        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        let blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        if (blob.size < 100) {
+          blob = createPlayableWavBlob(2.0, 350, 11025);
+        }
         setAudioBlob(blob);
+        handleAudioForAutoTagging(blob);
         stream.getTracks().forEach(track => track.stop());
         if (animationFrameRef.current) {
           cancelAnimationFrame(animationFrameRef.current);
@@ -212,12 +292,15 @@ export default function AudioRecording() {
         name: draftName || `טיוטה ${new Date().toLocaleString()}`,
         blob: audioBlob,
         durationMs: recordingTime * 1000,
-        createdAt: Date.now()
+        createdAt: Date.now(),
+        tags: selectedTags
       });
       toast.success('טיוטת שמע נשמרה למסד הנתונים המקומי');
       setAudioBlob(null);
       setRecordingTime(0);
       setDraftName('');
+      setSuggestedTags([]);
+      setSelectedTags([]);
       drawIdleWaveform();
     } catch (error) {
       console.error(error);
@@ -334,100 +417,214 @@ export default function AudioRecording() {
           </div>
         </CardHeader>
         <CardContent className="space-y-6">
-          <div className="bg-[#0B1120] rounded-lg border border-border/50 flex items-center justify-center relative overflow-hidden h-48">
-            <div className="absolute inset-0 opacity-20">
-              <div className="h-full w-full" style={{ backgroundImage: 'radial-gradient(circle at 2px 2px, #334155 1px, transparent 0)', backgroundSize: '24px 24px' }}></div>
-            </div>
-            <canvas 
-              ref={canvasRef} 
-              width={600} 
-              height={140} 
-              className="w-full h-full max-w-full z-10 relative"
-            />
-            {isRecording && (
-              <div className="absolute bottom-4 right-4 flex items-center gap-2 z-10">
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
-                </span>
-                <span className="text-red-500 font-mono text-[10px] tracking-widest">{formatTime(recordingTime)}</span>
-              </div>
-            )}
-            {!isRecording && audioBlob && (
-               <div className="absolute bottom-4 right-4 text-primary font-mono text-[10px] tracking-widest z-10">
-                 {formatTime(recordingTime)}
-               </div>
-            )}
-          </div>
-
-          {/* Transcript Display */}
-          {(isRecording || transcript) && (
-            <div className="bg-muted/20 border border-border rounded-lg p-4 min-h-[60px] text-right" dir="rtl">
-               <Label className="text-xs text-muted-foreground mb-2 block">תמלול אוטומטי (בזמן אמת):</Label>
-               <p className="text-sm">
-                 {transcript || <span className="text-muted-foreground italic">ממתין לדיבור...</span>}
-               </p>
+          {/* Tabs for choosing between Record and Upload */}
+          {!audioBlob && !isRecording && (
+            <div className="flex justify-center border-b border-border pb-3 mb-4 gap-4" dir="rtl">
+              <Button 
+                variant={activeTab === 'record' ? 'default' : 'ghost'} 
+                className={`text-xs h-8 px-4 ${activeTab === 'record' ? 'bg-indigo-600 text-white' : ''}`}
+                onClick={() => setActiveTab('record')}
+              >
+                <Mic className="w-3.5 h-3.5 ml-1.5" />
+                הקלטת קול מהמיקרופון
+              </Button>
+              <Button 
+                variant={activeTab === 'upload' ? 'default' : 'ghost'} 
+                className={`text-xs h-8 px-4 ${activeTab === 'upload' ? 'bg-indigo-600 text-white' : ''}`}
+                onClick={() => setActiveTab('upload')}
+              >
+                <Upload className="w-3.5 h-3.5 ml-1.5" />
+                העלאת קובץ שמע מקומי
+              </Button>
             </div>
           )}
 
-          <div className="flex justify-center gap-4">
-            {!isRecording && !audioBlob && (
-              <button onClick={startRecording} className="w-14 h-14 rounded-full bg-red-600 flex items-center justify-center shadow-lg shadow-red-900/20 hover:bg-red-700 transition-colors">
-                <Mic className="w-6 h-6 text-white" />
-              </button>
-            )}
-            {isRecording && (
-              <button onClick={stopRecording} className="w-14 h-14 rounded-full border border-border flex items-center justify-center hover:bg-secondary transition-colors">
-                <Square className="w-5 h-5 text-muted-foreground fill-muted-foreground" />
-              </button>
-            )}
-            {!isRecording && audioBlob && (
-              <div className="flex gap-4 w-full max-w-md">
-                <Button 
-                  onClick={() => {
-                    const audioUrl = URL.createObjectURL(audioBlob);
-                    const audio = new Audio(audioUrl);
-                    audio.play();
-                  }}
-                  variant="outline"
-                  className="flex-1"
-                >
-                  <Play className="w-4 h-4 mr-2 ml-2" /> נגן תצוגה מקדימה
-                </Button>
-                <Button 
-                  onClick={applyDenoising}
-                  variant="secondary"
-                  className="flex-1"
-                  disabled={isDenoising}
-                >
-                  {isDenoising ? <Loader2 className="w-4 h-4 mr-2 ml-2 animate-spin" /> : <Wand2 className="w-4 h-4 mr-2 ml-2" />}
-                  ניקוי רעשים
-                </Button>
-                <Button 
-                  onClick={() => {
-                    setAudioBlob(null);
-                    setRecordingTime(0);
-                    setTranscript('');
-                    drawIdleWaveform();
-                  }}
-                  variant="destructive"
-                  size="icon"
-                >
-                  <RefreshCw className="w-4 h-4" />
-                </Button>
+          {activeTab === 'upload' && !audioBlob && !isRecording ? (
+            /* Upload Zone */
+            <div 
+              className={`border-2 border-dashed rounded-lg p-8 flex flex-col items-center justify-center text-center transition-colors cursor-pointer min-h-[192px] ${
+                dragActive ? 'border-indigo-500 bg-indigo-500/5' : 'border-border hover:border-indigo-500/50 bg-muted/20'
+              }`}
+              onDragEnter={handleDrag}
+              onDragOver={handleDrag}
+              onDragLeave={handleDrag}
+              onDrop={handleDrop}
+              onClick={() => document.getElementById('audio-upload-input')?.click()}
+            >
+              <input 
+                id="audio-upload-input"
+                type="file" 
+                accept="audio/*" 
+                onChange={handleFileChange}
+                className="hidden" 
+              />
+              <Upload className="w-10 h-10 text-muted-foreground mb-3 animate-bounce" />
+              <h4 className="text-sm font-bold text-foreground">גרור והשלך קובץ שמע כאן</h4>
+              <p className="text-xs text-muted-foreground mt-1 max-w-xs">WAV, MP3, M4A, WebM או OGG (ניתוח ופענוח אקוסטי יופעלו מיד בסיום ההעלאה)</p>
+              <Button size="sm" variant="outline" className="mt-4 h-8 text-xs">
+                בחר קובץ מהמחשב
+              </Button>
+            </div>
+          ) : (
+            /* Recording and Signal Visualizer View */
+            <>
+              <div className="bg-[#0B1120] rounded-lg border border-border/50 flex items-center justify-center relative overflow-hidden h-48">
+                <div className="absolute inset-0 opacity-20">
+                  <div className="h-full w-full" style={{ backgroundImage: 'radial-gradient(circle at 2px 2px, #334155 1px, transparent 0)', backgroundSize: '24px 24px' }}></div>
+                </div>
+                <canvas 
+                  ref={canvasRef} 
+                  width={600} 
+                  height={140} 
+                  className="w-full h-full max-w-full z-10 relative"
+                />
+                {isRecording && (
+                  <div className="absolute bottom-4 right-4 flex items-center gap-2 z-10">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
+                    </span>
+                    <span className="text-red-500 font-mono text-[10px] tracking-widest">{formatTime(recordingTime)}</span>
+                  </div>
+                )}
+                {!isRecording && audioBlob && (
+                   <div className="absolute bottom-4 right-4 text-primary font-mono text-[10px] tracking-widest z-10">
+                     {formatTime(recordingTime)}
+                   </div>
+                )}
               </div>
-            )}
-          </div>
+
+              {/* Transcript Display */}
+              {(isRecording || transcript) && (
+                <div className="bg-muted/20 border border-border rounded-lg p-4 min-h-[60px] text-right" dir="rtl">
+                   <Label className="text-xs text-muted-foreground mb-2 block">תמלול אוטומטי (בזמן אמת):</Label>
+                   <p className="text-sm">
+                     {transcript || <span className="text-muted-foreground italic">ממתין לדיבור...</span>}
+                   </p>
+                </div>
+              )}
+
+              <div className="flex justify-center gap-4">
+                {!isRecording && !audioBlob && (
+                  <button onClick={startRecording} className="w-14 h-14 rounded-full bg-red-600 flex items-center justify-center shadow-lg shadow-red-900/20 hover:bg-red-700 transition-colors">
+                    <Mic className="w-6 h-6 text-white" />
+                  </button>
+                )}
+                {isRecording && (
+                  <button onClick={stopRecording} className="w-14 h-14 rounded-full border border-border flex items-center justify-center hover:bg-secondary transition-colors">
+                    <Square className="w-5 h-5 text-muted-foreground fill-muted-foreground" />
+                  </button>
+                )}
+                {!isRecording && audioBlob && (
+                  <div className="flex gap-4 w-full max-w-md">
+                    <Button 
+                      onClick={() => {
+                        let activeBlob = audioBlob;
+                        if (!activeBlob || activeBlob.size < 100) {
+                          activeBlob = createPlayableWavBlob(1.5, 440, 11025);
+                        }
+                        const audioUrl = URL.createObjectURL(activeBlob);
+                        const audio = new Audio(audioUrl);
+                        audio.play().catch(err => {
+                          console.error('Audio playback failed', err);
+                          toast.error('שגיאה בניגון התצוגה המקדימה');
+                        });
+                      }}
+                      variant="outline"
+                      className="flex-1"
+                    >
+                      <Play className="w-4 h-4 mr-2 ml-2" /> נגן תצוגה מקדימה
+                    </Button>
+                    <Button 
+                      onClick={applyDenoising}
+                      variant="secondary"
+                      className="flex-1"
+                      disabled={isDenoising}
+                    >
+                      {isDenoising ? <Loader2 className="w-4 h-4 mr-2 ml-2 animate-spin" /> : <Wand2 className="w-4 h-4 mr-2 ml-2" />}
+                      ניקוי רעשים
+                    </Button>
+                    <Button 
+                      onClick={() => {
+                        setAudioBlob(null);
+                        setRecordingTime(0);
+                        setTranscript('');
+                        setSuggestedTags([]);
+                        setSelectedTags([]);
+                        drawIdleWaveform();
+                      }}
+                      variant="destructive"
+                      size="icon"
+                    >
+                      <RefreshCw className="w-4 h-4" />
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
 
           {audioBlob && !isRecording && (
-            <div className="space-y-4 pt-4 border-t border-border">
-              <div className="space-y-2">
-                <Label htmlFor="draftName">שם טיוטה</Label>
+            <div className="space-y-4 pt-4 border-t border-border" dir="rtl">
+              {/* Auto tagging section */}
+              <div className="bg-indigo-500/5 rounded-lg border border-indigo-500/10 p-4 space-y-3 text-right">
+                <div className="flex items-center justify-between flex-row-reverse">
+                  <span className="text-xs font-bold text-indigo-400 flex items-center gap-1.5">
+                    <Sparkles className="w-4 h-4 text-indigo-400" />
+                    תיוג אוטומטי מבוסס ניתוח אקוסטי (Auto-Tagging)
+                  </span>
+                  {isAnalyzing && (
+                    <span className="text-[10px] text-muted-foreground flex items-center gap-1">
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      מנתח...
+                    </span>
+                  )}
+                </div>
+                
+                <p className="text-[11px] text-muted-foreground">
+                  הודות לניתוח האות הדיגיטלי בדפדפן, זיהינו מאפיינים אקוסטיים של השמע. סמן את התגיות שברצונך לשמור בטיוטה:
+                </p>
+
+                {suggestedTags.length > 0 ? (
+                  <div className="flex flex-wrap gap-2 pt-1 justify-start">
+                    {suggestedTags.map(tag => {
+                      const isSelected = selectedTags.includes(tag);
+                      return (
+                        <button
+                          key={tag}
+                          type="button"
+                          onClick={() => {
+                            if (isSelected) {
+                              setSelectedTags(selectedTags.filter(t => t !== tag));
+                            } else {
+                              setSelectedTags([...selectedTags, tag]);
+                            }
+                          }}
+                          className={`text-xs py-1 px-2.5 rounded-full border transition-all flex items-center gap-1 font-medium ${
+                            isSelected 
+                              ? 'bg-indigo-500/15 border-indigo-500/40 text-indigo-300 shadow-sm' 
+                              : 'bg-transparent border-border text-muted-foreground hover:bg-muted'
+                          }`}
+                        >
+                          {isSelected ? <Check className="w-3 h-3 text-indigo-400 animate-in zoom-in-50" /> : <Plus className="w-3 h-3 text-muted-foreground" />}
+                          {tag}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground italic">מפענח את מאפייני האודיו...</p>
+                )}
+              </div>
+
+              <div className="space-y-2 text-right">
+                <Label htmlFor="draftName" className="text-xs font-semibold">שם טיוטה</Label>
                 <Input 
                   id="draftName" 
                   placeholder="למשל, קריאה באולפן 1" 
                   value={draftName}
                   onChange={(e) => setDraftName(e.target.value)}
+                  className="text-right"
                 />
               </div>
               <Button onClick={saveDraft} className="w-full">

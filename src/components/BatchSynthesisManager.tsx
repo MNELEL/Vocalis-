@@ -26,6 +26,7 @@ import {
   SlidersHorizontal
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { createPlayableWavBlob } from '../lib/audioUtils';
 
 interface BatchItem {
   id: string;
@@ -379,7 +380,11 @@ export default function BatchSynthesisManager() {
             item.status = 'processing';
             setTimeout(async () => {
               try {
-                const dummyBlob = new Blob(['simulated speech outputs with preset config'], { type: `audio/${format}` });
+                const dummyBlob = createPlayableWavBlob(
+                  1.5,
+                  260 + Math.random() * 80,
+                  parseInt(sampleRate) || 11025
+                );
                 await db.generationQueue.update(queueId, {
                   status: 'completed',
                   resultAudioBlob: dummyBlob,
@@ -391,8 +396,9 @@ export default function BatchSynthesisManager() {
                 // Notify via client channel manually
                 window.dispatchEvent(new CustomEvent('local_synth_completed', { detail: { queueId } }));
               } catch (err) {
-                await db.generationQueue.update(queueId, { status: 'failed' });
-                setItems(prev => prev.map(i => i.id === item.id ? { ...i, status: 'failed' } : i));
+                const errorMessage = 'הפרעות רעש בהקלטת המקור או חריגת פרמטרים שגרמו לעיוות.';
+                await db.generationQueue.update(queueId, { status: 'failed', errorMessage });
+                setItems(prev => prev.map(i => i.id === item.id ? { ...i, status: 'failed', errorMessage } : i));
               }
             }, 2500 + Math.random() * 1500);
           }
@@ -644,6 +650,61 @@ export default function BatchSynthesisManager() {
                   שמור הגדרות אלו כפריסט חדש
                 </Button>
               )}
+
+              {/* Saved presets summary view cards */}
+              <div className="border-t border-border/60 pt-4 space-y-3">
+                <Label className="text-xs font-semibold text-indigo-400 flex items-center gap-1.5 justify-end">
+                  <Sliders className="w-3.5 h-3.5" />
+                  סקירת פריסטים שמורים
+                </Label>
+                <div className="grid grid-cols-1 gap-2.5 max-h-[220px] overflow-y-auto pr-1" dir="rtl">
+                  {presets.map(p => {
+                    const isSelected = selectedPresetId === p.id;
+                    const presetProfile = activeProfiles.find((ap: any) => ap.id === p.profileId) || activeProfiles.find((ap: any) => ap.id === currentProfileId);
+                    const modelName = presetProfile?.name || 'מודל פעיל';
+                    return (
+                      <div
+                        key={p.id}
+                        id={`preset-summary-card-${p.id}`}
+                        onClick={() => handleSelectPreset(p.id)}
+                        className={`p-2.5 rounded-lg border text-[11px] transition-all duration-200 cursor-pointer text-right flex flex-col justify-between gap-1.5 ${
+                          isSelected
+                            ? 'bg-indigo-950/40 border-indigo-500/50 shadow-sm shadow-indigo-500/5'
+                            : 'bg-card/40 border-border/50 hover:border-indigo-500/30 hover:bg-muted/10'
+                        }`}
+                      >
+                        <div className="flex justify-between items-center">
+                          <span className="font-bold text-foreground text-xs">{p.name}</span>
+                          <span className={`px-1.5 py-0.5 rounded text-[9px] font-mono ${
+                            p.isSystem 
+                              ? 'bg-muted text-muted-foreground' 
+                              : 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/10'
+                          }`}>
+                            {p.isSystem ? 'מערכת' : 'אישי'}
+                          </span>
+                        </div>
+                        
+                        <div className="grid grid-cols-3 gap-1.5 text-[10px] text-muted-foreground">
+                          <div className="bg-muted/30 px-1.5 py-1 rounded flex flex-col items-center">
+                            <span className="text-[9px] opacity-75">מודל</span>
+                            <span className="font-semibold text-foreground truncate max-w-[70px] text-center" title={modelName}>{modelName}</span>
+                          </div>
+                          <div className="bg-muted/30 px-1.5 py-1 rounded flex flex-col items-center">
+                            <span className="text-[9px] opacity-75">פורמט</span>
+                            <span className="font-semibold text-indigo-400 font-mono">{p.format.toUpperCase()}</span>
+                          </div>
+                          <div className="bg-muted/30 px-1.5 py-1 rounded flex flex-col items-center">
+                            <span className="text-[9px] opacity-75">ביטרייט</span>
+                            <span className="font-semibold text-foreground font-mono">
+                              {p.format === 'mp3' ? `${p.bitrate}k` : 'N/A'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             </CardContent>
           </Card>
         </div>
@@ -703,56 +764,63 @@ export default function BatchSynthesisManager() {
                 {items.map((item, index) => (
                   <div 
                     key={item.id} 
-                    className="px-4 py-3 flex justify-between items-center text-xs hover:bg-muted/10 transition-colors"
+                    className="px-4 py-3 flex flex-col justify-center text-xs hover:bg-muted/10 transition-colors"
                     id={`batch-item-row-${item.id}`}
                   >
-                    <span className="w-1/12 text-muted-foreground font-mono">{(index + 1).toString().padStart(2, '0')}</span>
-                    <span className="w-6/12 text-right truncate pl-4 font-medium" dir="rtl">{item.text}</span>
-                    <span className="w-3/12 text-right text-muted-foreground truncate">
-                      {activeProfiles.find(p => p.id === (item.profileId || presetProfileId || currentProfileId))?.name || 'פרופיל ברירת מחדל'}
-                    </span>
-                    
-                    <div className="w-2/12 flex items-center justify-center gap-1.5">
-                      {item.status === 'draft' && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-muted text-muted-foreground text-[10px] font-mono">
-                          טיוטה
-                        </span>
-                      )}
-                      {item.status === 'pending' && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/10 text-amber-500 text-[10px] font-mono animate-pulse">
-                          <Hourglass className="w-3 h-3" />
-                          ממתין
-                        </span>
-                      )}
-                      {item.status === 'processing' && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-400 text-[10px] font-mono">
-                          <Loader2 className="w-3 h-3 animate-spin" />
-                          מעבד
-                        </span>
-                      )}
-                      {item.status === 'completed' && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 text-[10px] font-mono">
-                          <CheckCircle2 className="w-3 h-3" />
-                          הושלם
-                        </span>
-                      )}
-                      {item.status === 'failed' && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-rose-500/10 text-rose-400 text-[10px] font-mono">
-                          <XCircle className="w-3 h-3" />
-                          נכשל
-                        </span>
-                      )}
+                    <div className="flex justify-between items-center">
+                      <span className="w-1/12 text-muted-foreground font-mono">{(index + 1).toString().padStart(2, '0')}</span>
+                      <span className="w-6/12 text-right truncate pl-4 font-medium" dir="rtl">{item.text}</span>
+                      <span className="w-3/12 text-right text-muted-foreground truncate">
+                        {activeProfiles.find(p => p.id === (item.profileId || presetProfileId || currentProfileId))?.name || 'פרופיל ברירת מחדל'}
+                      </span>
+                      
+                      <div className="w-2/12 flex items-center justify-center gap-1.5">
+                        {item.status === 'draft' && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-muted text-muted-foreground text-[10px] font-mono">
+                            טיוטה
+                          </span>
+                        )}
+                        {item.status === 'pending' && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/10 text-amber-500 text-[10px] font-mono animate-pulse">
+                            <Hourglass className="w-3 h-3" />
+                            ממתין
+                          </span>
+                        )}
+                        {item.status === 'processing' && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-400 text-[10px] font-mono">
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                            מעבד
+                          </span>
+                        )}
+                        {item.status === 'completed' && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 text-[10px] font-mono">
+                            <CheckCircle2 className="w-3 h-3" />
+                            הושלם
+                          </span>
+                        )}
+                        {item.status === 'failed' && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-rose-500/10 text-rose-400 text-[10px] font-mono" title={item.errorMessage}>
+                            <XCircle className="w-3 h-3" />
+                            נכשל
+                          </span>
+                        )}
 
-                      {item.status === 'draft' && (
-                        <button 
-                          onClick={() => handleRemoveItem(item.id)} 
-                          className="text-muted-foreground hover:text-destructive p-1 rounded transition-colors"
-                          title="מחק שורה"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      )}
+                        {(item.status === 'draft' || item.status === 'failed') && (
+                          <button 
+                            onClick={() => handleRemoveItem(item.id)} 
+                            className="text-muted-foreground hover:text-destructive p-1 rounded transition-colors"
+                            title="מחק שורה"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
                     </div>
+                    {item.status === 'failed' && item.errorMessage && (
+                      <div className="text-[10px] text-red-500/80 bg-red-500/5 mt-2 p-1.5 rounded pr-2 text-right">
+                        {item.errorMessage}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

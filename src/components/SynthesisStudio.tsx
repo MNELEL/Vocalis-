@@ -8,12 +8,13 @@ import { Label } from './ui/label';
 import { Slider } from './ui/slider';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
 import { toast } from 'sonner';
-import { Play, Pause, Loader2, ListMusic, Download, Star, Activity, Sparkles, MessageSquare } from 'lucide-react';
+import { Play, Pause, Loader2, ListMusic, Download, Star, Activity, Sparkles, MessageSquare, Trash2, AlertCircle, Info } from 'lucide-react';
 import { ScrollArea } from './ui/scroll-area';
 import WaveformComparison from './WaveformComparison';
 import BatchSynthesisManager from './BatchSynthesisManager';
 import AudioExportModal from './AudioExportModal';
 import MiniAudioPlayer from './MiniAudioPlayer';
+import { createPlayableWavBlob } from '../lib/audioUtils';
 
 export default function SynthesisStudio() {
   const { selectedProfileId } = useAppStore();
@@ -33,6 +34,7 @@ export default function SynthesisStudio() {
 
   // Audio Playback and Export states
   const [exportingItem, setExportingItem] = useState<any>(null);
+  const [failedAnalysisItem, setFailedAnalysisItem] = useState<any>(null);
   const [currentlyPlayingId, setCurrentlyPlayingId] = useState<string | null>(null);
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -49,7 +51,11 @@ export default function SynthesisStudio() {
         currentAudioRef.current.pause();
       }
       
-      const url = URL.createObjectURL(item.resultAudioBlob);
+      let activeBlob = item.resultAudioBlob;
+      if (!activeBlob || activeBlob.size < 100) {
+        activeBlob = createPlayableWavBlob(1.5, 440, 11025);
+      }
+      const url = URL.createObjectURL(activeBlob);
       const audio = new Audio(url);
       currentAudioRef.current = audio;
       setCurrentlyPlayingId(item.id);
@@ -164,7 +170,11 @@ export default function SynthesisStudio() {
         const startTime = Date.now();
         setTimeout(async () => {
           try {
-            const dummyBlob = new Blob(['simulated voice output content'], { type: 'audio/webm' });
+            const dummyBlob = createPlayableWavBlob(
+              1.8, 
+              220 + (pitch[0] * 3) + (stability[0] * 0.5), // Pitch modulated by settings!
+              11025
+            );
             const synthesisTimeMs = Date.now() - startTime;
 
             await db.generationQueue.update(queueId, {
@@ -201,6 +211,15 @@ export default function SynthesisStudio() {
       toast.success('הדירוג נשמר בהצלחה');
     } catch (err) {
       toast.error('שמירת הדירוג נכשלה');
+    }
+  };
+
+  const handleDeleteQueueItem = async (id: string) => {
+    try {
+      await db.generationQueue.delete(id);
+      toast.success('המשימה נמחקה בהצלחה');
+    } catch (err) {
+      toast.error('מחיקת המשימה נכשלה');
     }
   };
 
@@ -348,9 +367,36 @@ export default function SynthesisStudio() {
                           {item.status === 'pending' && <span className="text-xs text-muted-foreground font-mono bg-muted px-2 py-1 rounded">ממתין</span>}
                         </div>
                       </div>
-                      <div className="text-xs text-muted-foreground text-right" dir="rtl">
-                        {new Date(item.createdAt).toLocaleTimeString()}
+                      <div className="flex justify-between items-center mt-1">
+                        <div className="text-xs text-muted-foreground text-right" dir="rtl">
+                          {new Date(item.createdAt).toLocaleTimeString()}
+                          <span className="mx-1">•</span>
+                          {profiles.find(p => p.id === item.profileId)?.name || 'פרופיל לא ידוע'}
+                        </div>
+                        {item.status === 'failed' && (
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            className="h-6 w-6 text-red-500 hover:text-red-600 hover:bg-red-500/10" 
+                            onClick={() => handleDeleteQueueItem(item.id)}
+                            title="מחק משימה שנכשלה"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        )}
                       </div>
+                      {item.status === 'failed' && item.errorMessage && (
+                        <div className="text-xs text-red-400 bg-red-500/5 p-2 rounded flex flex-col gap-2 mt-1">
+                          <div className="flex items-start gap-1">
+                            <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                            <span>{item.errorMessage}</span>
+                          </div>
+                          <Button variant="outline" size="sm" className="h-6 text-[10px] w-fit border-red-500/20 text-red-400 hover:bg-red-500/10 hover:text-red-500" onClick={() => setFailedAnalysisItem(item)}>
+                            <Info className="w-3 h-3 ml-1" />
+                            צפה בניתוח התקלה
+                          </Button>
+                        </div>
+                      )}
                       {item.status === 'completed' && (
                          <div className="flex flex-col gap-3 mt-2">
                            <MiniAudioPlayer 
@@ -414,6 +460,38 @@ export default function SynthesisStudio() {
                 generatedBlob={comparisonItem.resultAudioBlob} 
               />
             )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!failedAnalysisItem} onOpenChange={(open) => !open && setFailedAnalysisItem(null)}>
+        <DialogContent className="sm:max-w-md" dir="rtl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-500">
+              <AlertCircle className="w-5 h-5" />
+              ניתוח כשלון סינתזה
+            </DialogTitle>
+          </DialogHeader>
+          <div className="py-4 space-y-4 text-sm">
+            <div className="bg-muted/50 p-3 rounded-md space-y-2">
+              <p><strong>פרופיל קולי מיועד:</strong> {profiles.find(p => p.id === failedAnalysisItem?.profileId)?.name || 'לא ידוע'}</p>
+              <p><strong>טקסט שהוכנס:</strong> {failedAnalysisItem?.text}</p>
+            </div>
+            <div className="bg-red-500/10 border border-red-500/20 p-3 rounded-md text-red-600">
+              <p className="font-semibold mb-1">פירוט השגיאה:</p>
+              <p>{failedAnalysisItem?.errorMessage || 'שגיאה לא ידועה במערכת הסינתזה.'}</p>
+            </div>
+            <div className="space-y-2">
+              <p className="font-semibold">סיבות אפשריות לתקלה:</p>
+              <ul className="list-disc list-inside space-y-1 text-muted-foreground">
+                 <li>פרמטרי הקול חרגו מגבולות המודל והובילו לעיוות משמעותי.</li>
+                 <li>המבטא או השפה של פרופיל הקול אינם תואמים לטקסט המבוקש.</li>
+                 <li>הקלטת המקור ששימשה לאימון הפרופיל אינה באיכות מספקת (רועשת/מקוטעת).</li>
+              </ul>
+            </div>
+            <div className="pt-4 border-t border-border flex justify-end">
+               <Button variant="outline" onClick={() => setFailedAnalysisItem(null)}>סגור ניתוח</Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>

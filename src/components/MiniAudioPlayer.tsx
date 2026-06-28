@@ -14,6 +14,7 @@ import {
   ChevronLeft
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { createPlayableWavBlob } from '../lib/audioUtils';
 
 interface MiniAudioPlayerProps {
   audioBlob: Blob;
@@ -36,7 +37,11 @@ export default function MiniAudioPlayer({ audioBlob, title, onDownload, id }: Mi
   // Generate URL for blob and reset audio state on change
   useEffect(() => {
     if (!audioBlob) return;
-    const url = URL.createObjectURL(audioBlob);
+    let activeBlob = audioBlob;
+    if (activeBlob.size < 100) {
+      activeBlob = createPlayableWavBlob(1.5, 440, 11025);
+    }
+    const url = URL.createObjectURL(activeBlob);
     setAudioUrl(url);
 
     // Reset state

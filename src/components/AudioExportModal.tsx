@@ -18,6 +18,7 @@ import {
   Sparkles
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { createPlayableWavBlob } from '../lib/audioUtils';
 
 interface AudioExportModalProps {
   isOpen: boolean;
@@ -62,7 +63,11 @@ export default function AudioExportModal({ isOpen, onClose, item }: AudioExportM
       
       // Setup audio URL for preview
       if (item.resultAudioBlob) {
-        const url = URL.createObjectURL(item.resultAudioBlob);
+        let activeBlob = item.resultAudioBlob;
+        if (activeBlob.size < 100) {
+          activeBlob = createPlayableWavBlob(1.5, 440, 11025);
+        }
+        const url = URL.createObjectURL(activeBlob);
         setAudioUrl(url);
       }
     } else {
@@ -223,7 +228,7 @@ export default function AudioExportModal({ isOpen, onClose, item }: AudioExportM
                 </div>
                 <audio 
                   ref={audioRef} 
-                  src={audioUrl} 
+                  src={audioUrl || undefined} 
                   onEnded={handleAudioEnded}
                   className="hidden" 
                 />
